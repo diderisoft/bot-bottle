@@ -61,13 +61,20 @@ def grants(bottle: ManifestBottle) -> list[str]:
             what = ", ".join(methods)
         if route.GitFetch:
             what += ", git clone/fetch"
-        if route.TokenRef:
-            what += (f", with secret env {route.TokenRef}" if route.TokenFromEnv
-                     else f", with secrets file {route.TokenRef}")
+        if route.CredLabel:
+            what += f", with credential {route.CredLabel!r}"
+        elif route.TokenRef:
+            if route.TokenFromEnv:
+                what += f", with secret env {route.TokenRef}"
+            else:
+                what += f", with secrets file {route.TokenRef}"
         lines.append(f"reach   {route.Host:<30} {what}")
     for repo in bottle.git:
-        line = f"{'fetch' if repo.Key.read_only else 'push':<7} {repo.Upstream}"
-        if repo.Key.provider in API_KINDS:
+        read_only = repo.Key.read_only
+        line = f"{'fetch' if read_only else 'push':<7} {repo.Upstream}"
+        if repo.CredLabel:
+            line += f" (key from credential {repo.CredLabel!r})"
+        elif repo.Key.provider in API_KINDS:
             # The forge token goes to the API that mints the key.
             api = repo.Key.api_url or f"https://{repo.UpstreamHost}"
             line += f" (key minted at {api} with ${repo.Key.forge_token_env})"
@@ -88,7 +95,23 @@ def grants(bottle: ManifestBottle) -> list[str]:
             lines.append(f"read    {name} ({what}, {source})")
     if bottle.nested_containers:
         lines.append("run     containers inside the bottle")
+    for label, cred in sorted(getattr(bottle, "credentials", {}).items()):
+        if cred.source != "secret":
+            lines.append(_cred_grant_line(label, cred))
     return lines
+
+
+def _cred_grant_line(label: str, cred: object) -> str:
+    """One `cred` line for the trust prompt: what minting this credential does."""
+    try:
+        from ..credentials import default_registry  # pylint: disable=import-outside-toplevel
+        provider = default_registry().get(getattr(cred, "source", ""))
+        grant = provider.describe(getattr(cred, "settings", {})) if provider else None
+    except Exception:  # pylint: disable=broad-exception-caught
+        grant = None
+    detail = (grant.starts_from if grant and grant.starts_from
+              else getattr(cred, "source", "unknown"))
+    return f"cred    {label}  from {detail}"
 
 
 def _fingerprint(host_key: str) -> str:

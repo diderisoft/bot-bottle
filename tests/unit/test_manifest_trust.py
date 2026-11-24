@@ -9,13 +9,14 @@ import stat
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from bot_bottle.cli.commands.trust import cmd_trust
 from bot_bottle.cli.launch_client import load_trusting
 from bot_bottle.lib.db_store import MACHINE_SPECIFIC
 from bot_bottle.lib.log import Die
-from bot_bottle.manifest import ManifestIndex, trust
+from bot_bottle.manifest import ManifestBottle, ManifestIndex, trust
 from bot_bottle.manifest.util import ManifestError
 from bot_bottle.paths import host_db_path
 from tests.unit import as_cli, serve_host_controller
@@ -456,6 +457,101 @@ class ThroughTheHostController(_Project):
         with patch.object(trust.Trusted, "to_json", return_value={"hash": ""}), \
                 self.assertRaisesRegex(ManifestError, "a trust record is"):
             trust.trust(self.untrusted("pi", "./app"))
+
+
+class CredentialGrants(unittest.TestCase):
+    """trust.grants() shows credential grant lines for non-secret sources
+    and replaces `__cred__<label>` route refs with `with credential '<label>'`."""
+
+    def _bottle(self, raw: dict[str, Any]) -> ManifestBottle:
+        from bot_bottle.manifest.extends import resolve_bottles  # pylint: disable=import-outside-toplevel
+        return resolve_bottles({"dev": raw})["dev"]
+
+    def test_route_with_cred_token_ref_shows_credential_label(self) -> None:
+        bottle = self._bottle({
+            "credentials": {"my-login": {"source": "host_login", "harness": "codex"}},
+            "egress": {"routes": [{"host": "api.example.com", "methods": ["GET"],
+                                   "auth": {"type": "bearer", "value": "$my-login"}}]},
+        })
+        lines = trust.grants(bottle)
+        route_line = next(l for l in lines if "api.example.com" in l)
+        self.assertIn("with credential 'my-login'", route_line)
+        self.assertNotIn("__cred__", route_line)
+        self.assertNotIn("secrets file", route_line)
+
+    def test_non_secret_credential_adds_cred_grant_line(self) -> None:
+        bottle = self._bottle({
+            "credentials": {"my-login": {"source": "host_login", "harness": "codex"}},
+        })
+        lines = trust.grants(bottle)
+        cred_lines = [l for l in lines if l.startswith("cred")]
+        self.assertEqual(1, len(cred_lines))
+        self.assertIn("my-login", cred_lines[0])
+        self.assertIn("host login (codex)", cred_lines[0])
+
+    def test_prompt_credential_shows_asks_detail(self) -> None:
+        bottle = self._bottle({
+            "credentials": {"api-key": {"source": "prompt", "message": "Paste your key"}},
+        })
+        lines = trust.grants(bottle)
+        cred_lines = [l for l in lines if l.startswith("cred")]
+        self.assertEqual(1, len(cred_lines))
+        self.assertIn("api-key", cred_lines[0])
+        self.assertIn("asks: Paste your key", cred_lines[0])
+
+    def test_secret_credential_does_not_add_cred_grant_line(self) -> None:
+        bottle = self._bottle({
+            "credentials": {"stored": {"source": "secret", "secret": "MY_API_KEY"}},
+        })
+        lines = trust.grants(bottle)
+        self.assertFalse(any(l.startswith("cred") for l in lines))
+
+    def test_cred_lines_are_sorted_by_label(self) -> None:
+        bottle = self._bottle({
+            "credentials": {
+                "z-login": {"source": "host_login", "harness": "codex"},
+                "a-login": {"source": "host_login", "harness": "codex"},
+            },
+        })
+        lines = trust.grants(bottle)
+        cred_lines = [l for l in lines if l.startswith("cred")]
+        self.assertEqual(2, len(cred_lines))
+        self.assertIn("a-login", cred_lines[0])
+        self.assertIn("z-login", cred_lines[1])
+
+    def test_cred_key_git_entry_shows_push_not_fetch(self) -> None:
+        # CredLabel repos default to push (Key.read_only=False); the trust
+        # prompt must not misrepresent write-capable credential keys as fetch-only.
+        from bot_bottle.manifest import ManifestIndex
+        idx = ManifestIndex.from_json_obj({
+            "bottles": {"dev": {
+                "credentials": {"my-key": {
+                    "source": "secret", "kind": "ssh-key",
+                    "private_key": "PRIV", "public_key": "PUB",
+                }},
+                "git_gate": {"repos": {"app": {
+                    "url": "ssh://git@github.com/owner/repo.git",
+                    "key": "$my-key",
+                }}},
+            }},
+            "agents": {"demo": {"skills": [], "prompt": ""}},
+        })
+        bottle = idx.load_for_agent("demo", ("dev",)).bottle
+        lines = trust.grants(bottle)
+        repo_line = next(l for l in lines if "repo.git" in l)
+        self.assertIn("key from credential 'my-key'", repo_line)
+        self.assertTrue(repo_line.startswith("push"),
+                        f"Expected line to start with 'push', got: {repo_line!r}")
+
+    def test_cred_lines_appear_after_nested_containers(self) -> None:
+        bottle = self._bottle({
+            "credentials": {"my-login": {"source": "host_login", "harness": "codex"}},
+            "nested_containers": True,
+        })
+        lines = trust.grants(bottle)
+        containers_idx = next(i for i, l in enumerate(lines) if "containers" in l)
+        cred_idx = next(i for i, l in enumerate(lines) if l.startswith("cred"))
+        self.assertGreater(cred_idx, containers_idx)
 
 
 if __name__ == "__main__":

@@ -44,8 +44,10 @@ _SOURCE_SETTINGS: dict[str, frozenset[str]] = {
                          "session_token", "private_key", "public_key"}),
     "prompt": frozenset({"message"}),
     "host_login": frozenset({"harness"}),
-    # Remaining sources are future chunks; their settings are unchecked in
-    # chunk 1 to avoid breaking manifests written against the PRD.
+    "file": frozenset({"path", "private_key_path", "public_key_path"}),
+    "gitea_deploy_key": frozenset({"api_url", "token", "repo", "read_only"}),
+    # Remaining sources are future chunks; their settings are unchecked
+    # until then, to avoid breaking manifests written against the PRD.
 }
 
 
@@ -174,6 +176,13 @@ class ManifestCredential:
         # Source-specific required settings.
         if source == "secret":
             _check_secret_settings(ctx, kind, settings)
+        elif source == "file":
+            _check_file_settings(ctx, kind, settings)
+
+        # Keep the resolved kind in the settings, so `provider.mint()` (at
+        # launch and when a re-adopted bottle is re-minted) receives it even
+        # when the manifest left it implied.
+        settings["kind"] = kind
 
         return cls(
             label=label, source=source, kind=kind,
@@ -226,6 +235,9 @@ def check_cred_refs(
     - Unswappable placeholder: a `$label` in `env:` must have at least one
       egress route or git-gate key that uses the same credential (otherwise
       the placeholder the agent holds has nowhere to be swapped).
+    - A credential's settings may use `$label` (a deploy key minted with an
+      API token credential): each must name a declared credential, and the
+      references must not form a cycle.
     """
     all_labels = (
         frozenset(env_cred_vars.values())
@@ -272,6 +284,65 @@ def check_cred_refs(
                 f"its auth, or remove it from env"
             )
 
+    # $label refs in settings: each names a credential, and no cycles.
+    dep_graph: dict[str, frozenset[str]] = {}
+    for label, cred in credentials.items():
+        deps = settings_cred_deps(cred.settings)
+        for dep in sorted(deps):
+            if dep not in credentials:
+                raise ManifestError(
+                    f"bottle '{bottle}' credentials.{label}: ${dep} names no "
+                    f"declared credential"
+                )
+        dep_graph[label] = deps
+    _check_cycles(bottle, dep_graph)
+
+
+def settings_cred_deps(settings: Mapping[str, object]) -> frozenset[str]:
+    """The credential labels a credential's settings reference with `$label`."""
+    return frozenset(
+        parse_cred_label(v) for v in settings.values()
+        if isinstance(v, str) and is_cred_ref(v)
+    )
+
+
+def _check_cycles(bottle: str, graph: Mapping[str, frozenset[str]]) -> None:
+    """Fail on a cycle in the credential dependency graph (depth-first)."""
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def dfs(node: str, path: list[str]) -> None:
+        if node in visiting:
+            cycle = " → ".join(path[path.index(node):] + [node])
+            raise ManifestError(f"bottle '{bottle}': credential cycle: {cycle}")
+        if node in visited:
+            return
+        visiting.add(node)
+        path.append(node)
+        for dep in sorted(graph.get(node, frozenset())):
+            dfs(dep, path)
+        path.pop()
+        visiting.discard(node)
+        visited.add(node)
+
+    for node in sorted(graph):
+        dfs(node, [])
+
+
+def _check_file_settings(ctx: str, kind: str, settings: Mapping[str, object]) -> None:
+    """`file` needs `path` for a token and `private_key_path` for an ssh-key;
+    `public_key_path` is optional (defaults to the private key's `.pub`)."""
+    required = "path" if kind == KIND_TOKEN else "private_key_path"
+    for key in (required, "public_key_path"):
+        val = settings.get(key)
+        if key == "public_key_path" and val is None:
+            continue
+        if not isinstance(val, str) or not val:
+            raise ManifestError(
+                f"{ctx}: source 'file' with kind {kind!r} requires "
+                f"'{key}: /path/to/file' (a non-empty string)"
+            )
+
 
 def _check_secret_settings(ctx: str, kind: str, settings: Mapping[str, object]) -> None:
     if kind == KIND_TOKEN:
@@ -306,5 +377,6 @@ __all__ = [
     "is_cred_ref",
     "parse_cred_label",
     "parse_credentials_block",
+    "settings_cred_deps",
     "unescape_dollar",
 ]

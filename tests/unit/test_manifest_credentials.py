@@ -209,6 +209,54 @@ class TestCheckCredRefs(unittest.TestCase):
 
 # ─── ManifestBottle integration ─────────────────────────────────────────────
 
+class TestSettingsCredRefs(unittest.TestCase):
+    """`$label` in a credential's settings: it must name a credential, and the
+    references must not form a cycle."""
+
+    def _check(self, creds: dict[str, Any]) -> None:
+        check_cred_refs("b", _creds(creds), env_cred_vars={},
+                        route_cred_labels=frozenset(), git_key_cred_labels=frozenset())
+
+    def test_reference_to_declared_credential(self) -> None:
+        self._check({
+            "api": {"source": "secret", "secret": "GITEA_TOKEN"},
+            "deploy": {"source": "gitea_deploy_key", "api_url": "https://g.example.com",
+                       "token": "$api", "repo": "o/r"},
+        })
+
+    def test_reference_to_undeclared_credential(self) -> None:
+        with self.assertRaises(ManifestError) as cm:
+            self._check({"deploy": {"source": "gitea_deploy_key", "api_url": "https://g",
+                                    "token": "$missing", "repo": "o/r"}})
+        self.assertIn("$missing names no declared credential", str(cm.exception))
+
+    def test_cycle(self) -> None:
+        with self.assertRaises(ManifestError) as cm:
+            self._check({
+                "a": {"source": "host_login", "harness": "$b"},
+                "b": {"source": "host_login", "harness": "$a"},
+            })
+        self.assertIn("credential cycle", str(cm.exception))
+
+
+class TestFileSettings(unittest.TestCase):
+    def test_ssh_key_needs_private_key_path(self) -> None:
+        with self.assertRaises(ManifestError):
+            _creds({"k": {"source": "file"}})
+
+    def test_ssh_key_public_key_path_is_optional(self) -> None:
+        creds = _creds({"k": {"source": "file", "private_key_path": "~/.ssh/id"}})
+        self.assertEqual(creds["k"].kind, "ssh-key")
+
+    def test_token_needs_path(self) -> None:
+        with self.assertRaises(ManifestError):
+            _creds({"t": {"source": "file", "kind": "token"}})
+
+    def test_resolved_kind_is_kept_in_settings(self) -> None:
+        creds = _creds({"k": {"source": "file", "private_key_path": "~/.ssh/id"}})
+        self.assertEqual(creds["k"].settings["kind"], "ssh-key")
+
+
 class TestManifestBottleCredentials(unittest.TestCase):
     def test_no_credentials_field(self):
         b = _bottle({})

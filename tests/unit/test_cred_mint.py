@@ -224,6 +224,41 @@ class TestMintCredBlock(unittest.TestCase):
         self.assertIn("EGRESS_TOKEN_1", slots["token"])
         self.assertNotIn("EGRESS_TOKEN_2", slots["token"])
 
+    def test_secret_ssh_key_minted_into_minted_ssh_keys(self) -> None:
+        # source: secret, kind: ssh-key must NOT be skipped — there is no
+        # EgressTokenSecrets path for ssh keys; the values must reach provision.py.
+        from bot_bottle.control.hostctl.cred_mint import mint_cred_block
+        from bot_bottle.credentials import _SecretProvider
+        reg = _registry_with(_SecretProvider())
+        secrets = MappingSecrets({"PRIV": "priv-pem-content", "PUB": "ssh-ed25519 AAAA..."})
+        plan = self._plan(
+            bottle_extra={"credentials": {"deploy-key": {
+                "source": "secret", "kind": "ssh-key",
+                "private_key": "PRIV", "public_key": "PUB",
+            }}},
+        )
+        with mock.patch("bot_bottle.secret_source.FileSecrets", _no_file_secrets):
+            updated, entries = mint_cred_block(plan, _SLUG, secrets, registry=reg)
+        self.assertIsNot(updated, plan)
+        self.assertIn("deploy-key", updated.minted_ssh_keys)
+        self.assertEqual(updated.minted_ssh_keys["deploy-key"]["private_key"], "priv-pem-content")
+        self.assertEqual(updated.minted_ssh_keys["deploy-key"]["public_key"], "ssh-ed25519 AAAA...")
+        self.assertEqual(len(entries), 1)
+
+    def test_secret_token_still_skipped(self) -> None:
+        # source: secret, kind: token must still be skipped (EgressTokenSecrets handles it).
+        from bot_bottle.control.hostctl.cred_mint import mint_cred_block
+        from bot_bottle.credentials import _SecretProvider
+        reg = _registry_with(_SecretProvider())
+        plan = self._plan(
+            bottle_extra={"credentials": {"my-tok": {"source": "secret", "secret": "MY_SECRET"}}},
+            token_env_map={"EGRESS_TOKEN_0": "MY_SECRET"},
+        )
+        with mock.patch("bot_bottle.secret_source.FileSecrets", _no_file_secrets):
+            updated, entries = mint_cred_block(plan, _SLUG, MappingSecrets({}), registry=reg)
+        self.assertIs(updated, plan)
+        self.assertEqual(entries, [])
+
     def test_no_matching_slot_still_mints(self) -> None:
         from bot_bottle.control.hostctl.cred_mint import mint_cred_block
         prov = _FakeMintProvider(token="env-only")
@@ -292,6 +327,190 @@ class TestCredBlockFor(unittest.TestCase):
         self.assertIsNone(cred_block_for(plan))
 
 
+# ── cred_block_for ssh-key entries ────────────────────────────────────────────
+
+class TestCredBlockForSshKey(unittest.TestCase):
+
+    def setUp(self) -> None:
+        import tempfile, shutil
+        self.stage = Path(tempfile.mkdtemp(prefix="cred-adopt-ssh-test."))
+        self.addCleanup(shutil.rmtree, self.stage, ignore_errors=True)
+        self.addCleanup(use_bottle_root(self.stage / "root"))
+
+    def _plan(self, bottle_extra: dict[str, Any] | None = None,
+              token_env_map: dict[str, Any] | None = None) -> FirecrackerBottlePlan:
+        fields = _stage_fields(self.stage, bottle_extra)
+        plan = FirecrackerBottlePlan(**fields)
+        if token_env_map is not None:
+            plan = dataclasses.replace(
+                plan, egress_plan=dataclasses.replace(
+                    plan.egress_plan, token_env_map=token_env_map))
+        return plan
+
+    def test_ssh_key_cred_included_with_git_names(self) -> None:
+        plan = self._plan(bottle_extra={
+            "credentials": {"my-key": {
+                "source": "secret", "kind": "ssh-key",
+                "private_key": "PRIV", "public_key": "PUB",
+            }},
+            "git_gate": {"repos": {"app": {
+                "url": "ssh://git@github.com/owner/repo.git",
+                "key": "$my-key",
+            }}},
+        })
+        result = cred_block_for(plan)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(len(result.entries), 1)
+        e = result.entries[0]
+        self.assertEqual("my-key", e.label)
+        self.assertEqual("ssh-key", e.kind)
+        self.assertEqual(("app",), e.git_entry_names)
+        self.assertEqual({}, e.slots)
+
+    def test_ssh_key_multiple_repos(self) -> None:
+        plan = self._plan(bottle_extra={
+            "credentials": {"shared-key": {
+                "source": "file",
+                "private_key_path": "/priv", "public_key_path": "/pub",
+            }},
+            "git_gate": {"repos": {
+                "app": {"url": "ssh://git@github.com/owner/app.git", "key": "$shared-key"},
+                "docs": {"url": "ssh://git@github.com/owner/docs.git", "key": "$shared-key"},
+            }},
+        })
+        result = cred_block_for(plan)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(1, len(result.entries))
+        self.assertIn("app", result.entries[0].git_entry_names)
+        self.assertIn("docs", result.entries[0].git_entry_names)
+
+    def test_ssh_key_with_no_git_refs_excluded(self) -> None:
+        # An ssh-key credential that no git entry references has nothing to adopt.
+        plan = self._plan(bottle_extra={
+            "credentials": {"unused-key": {
+                "source": "secret", "kind": "ssh-key",
+                "private_key": "PRIV", "public_key": "PUB",
+            }},
+        })
+        self.assertIsNone(cred_block_for(plan))
+
+    def test_secret_token_still_excluded(self) -> None:
+        plan = self._plan(
+            bottle_extra={"credentials": {"tok": {"source": "secret", "secret": "X"}}},
+            token_env_map={"EGRESS_TOKEN_0": "X"},
+        )
+        self.assertIsNone(cred_block_for(plan))
+
+
+# ── _rewrite_cred_key_files ────────────────────────────────────────────────────
+
+class TestRewriteCredKeyFiles(unittest.TestCase):
+
+    def setUp(self) -> None:
+        import tempfile, shutil
+        self.tmp = Path(tempfile.mkdtemp(prefix="rewrite-key-test."))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _entry(self, git_names: tuple[str, ...]) -> AdoptedCredEntry:
+        return AdoptedCredEntry(
+            label="my-key", source="file", kind="ssh-key",
+            settings={"private_key_path": "/priv", "kind": "ssh-key"},
+            slots={}, git_entry_names=git_names,
+        )
+
+    def _minted(self, private_key: str = "priv-pem-content") -> MintedCredential:
+        return MintedCredential("ssh-key",
+                                {"private_key": private_key, "public_key": "pub"},
+                                None, "file:/priv")
+
+    def test_writes_key_file_per_git_entry(self) -> None:
+        from bot_bottle.control.hostctl.cred_mint import _rewrite_cred_key_files
+        gate_dir = self.tmp / "gate"
+        gate_dir.mkdir()
+        entry = self._entry(("app", "docs"))
+        with mock.patch("bot_bottle.bottle_state.git_gate_state_dir",
+                        return_value=gate_dir):
+            _rewrite_cred_key_files("test-slug", entry, self._minted())
+        self.assertTrue((gate_dir / "app-key").exists())
+        self.assertEqual("priv-pem-content", (gate_dir / "app-key").read_text())
+        self.assertEqual(0o600, (gate_dir / "app-key").stat().st_mode & 0o777)
+        self.assertTrue((gate_dir / "docs-key").exists())
+
+    def test_creates_stage_dir_if_missing(self) -> None:
+        from bot_bottle.control.hostctl.cred_mint import _rewrite_cred_key_files
+        gate_dir = self.tmp / "missing" / "gate"
+        with mock.patch("bot_bottle.bottle_state.git_gate_state_dir",
+                        return_value=gate_dir):
+            _rewrite_cred_key_files("test-slug", self._entry(("repo",)), self._minted())
+        self.assertTrue((gate_dir / "repo-key").exists())
+
+    def test_no_git_names_does_nothing(self) -> None:
+        from bot_bottle.control.hostctl.cred_mint import _rewrite_cred_key_files
+        # Should not raise or touch the filesystem.
+        _rewrite_cred_key_files("slug", self._entry(()), self._minted())
+
+    def test_missing_private_key_warns_and_skips(self) -> None:
+        from bot_bottle.control.hostctl.cred_mint import _rewrite_cred_key_files
+        from bot_bottle.credentials import KIND_SSH_KEY, MintedCredential
+        minted = MintedCredential(KIND_SSH_KEY, {"private_key": "", "public_key": "pub"},
+                                  None, "file:/priv")
+        gate_dir = self.tmp / "gate2"
+        gate_dir.mkdir()
+        with mock.patch("bot_bottle.bottle_state.git_gate_state_dir", return_value=gate_dir):
+            _rewrite_cred_key_files("slug", self._entry(("repo",)), minted)
+        self.assertFalse((gate_dir / "repo-key").exists())
+
+
+# ── recredential_block ssh-key path ───────────────────────────────────────────
+
+class TestRecredentialBlockSshKey(unittest.TestCase):
+
+    def setUp(self) -> None:
+        import tempfile, shutil
+        self.tmp = Path(tempfile.mkdtemp(prefix="recred-ssh-test."))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def test_re_mints_and_writes_key_file(self) -> None:
+        from bot_bottle.control.hostctl.cred_mint import recredential_block
+        from bot_bottle.backend.adoption import AdoptedCredBlock, AdoptedCredEntry, AdoptionRecord
+        from bot_bottle.credentials import _SecretProvider, KIND_SSH_KEY
+
+        gate_dir = self.tmp / "gate"
+        gate_dir.mkdir()
+
+        entry = AdoptedCredEntry(
+            label="my-key", source="secret", kind=KIND_SSH_KEY,
+            settings={"private_key": "PRIV_SECRET", "public_key": "PUB_SECRET",
+                      "kind": KIND_SSH_KEY},
+            slots={}, git_entry_names=("app",),
+        )
+        record_obj = AdoptionRecord(
+            container="cnt", registry_id="reg-id",
+            cred_block=AdoptedCredBlock(entries=(entry,)),
+        )
+        record = mock.Mock()
+        record.id = _SLUG
+
+        secrets = MappingSecrets({"PRIV_SECRET": "-----BEGIN OPENSSH PRIVATE KEY-----\npriv\n",
+                                  "PUB_SECRET": "ssh-ed25519 AAAA..."})
+        reg = _registry_with(_SecretProvider())
+
+        with mock.patch("bot_bottle.backend.adoption.read", return_value=record_obj), \
+             mock.patch("bot_bottle.secret_source.FileSecrets", mock.Mock(return_value=secrets)), \
+             mock.patch("bot_bottle.bottle_state.git_gate_state_dir", return_value=gate_dir), \
+             mock.patch("bot_bottle.control.hostctl.credential_refresh.read_env_var_secret",
+                        return_value="env-sec"):
+            recredential_block(record, mock.Mock(attach_adopted=mock.Mock(return_value=mock.Mock())),
+                               mock.Mock(), mock.Mock(), registry=reg)
+
+        key_file = gate_dir / "app-key"
+        self.assertTrue(key_file.exists(), "key file was not written on restart")
+        self.assertIn("PRIVATE KEY", key_file.read_text())
+        self.assertEqual(0o600, key_file.stat().st_mode & 0o777)
+
+
 # ── adoption serialisation round-trip ──────────────────────────────────────────
 
 class TestAdoptedCredBlockRoundTrip(unittest.TestCase):
@@ -337,6 +556,26 @@ class TestAdoptedCredBlockRoundTrip(unittest.TestCase):
     def test_missing_entries_key_returns_none(self) -> None:
         from bot_bottle.backend import adoption
         self.assertIsNone(adoption._cred_block({"no_entries": []}))  # type: ignore[attr-defined]
+
+    def test_round_trip_with_git_entry_names(self) -> None:
+        import json
+        from bot_bottle.backend import adoption
+        entry = AdoptedCredEntry(
+            label="deploy-key", source="file", kind="ssh-key",
+            settings={"private_key_path": "/priv", "public_key_path": "/pub",
+                      "kind": "ssh-key"},
+            slots={},
+            git_entry_names=("app", "docs"),
+        )
+        block = AdoptedCredBlock(entries=(entry,))
+        raw = json.loads(json.dumps(dataclasses.asdict(block)))
+        result = adoption._cred_block(raw)  # type: ignore[attr-defined]
+        self.assertIsNotNone(result)
+        assert result is not None
+        e = result.entries[0]
+        self.assertEqual(e.git_entry_names, ("app", "docs"))
+        self.assertEqual(e.kind, "ssh-key")
+        self.assertEqual(e.slots, {})
 
 
 # ── BottlePlan.minted_cred_values ─────────────────────────────────────────────
@@ -417,9 +656,6 @@ class TestForgesCredentialsRaw(unittest.TestCase):
         entry = manifest.bottle.credentials["my-login"]
         self.assertEqual(entry.source, "host_login")
 
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 # ── recredential_block / audit_cred_entries ───────────────────────────────────
@@ -520,3 +756,63 @@ class TestAuditCredEntries(unittest.TestCase):
             "credential.minted", bottle=_REC, activation="act-1",
             harness="credentials", label="tok", cred_kind=KIND_TOKEN,
             source=_FAKE_SOURCE, principal="fake:tok")
+
+
+# ── $label resolution in settings ─────────────────────────────────────────────
+
+class _TrackingProvider(CredentialProvider):
+    """Records the settings each label is minted with."""
+    source = _FAKE_SOURCE
+    kinds = (KIND_TOKEN,)
+    project_definable = True
+
+    def __init__(self) -> None:
+        self.received: dict[str, dict[str, object]] = {}
+
+    def mint(self, label: str, bottle_id: str,
+             settings: Mapping[str, object], secrets: object) -> MintedCredential:
+        self.received[label] = dict(settings)
+        tok = "first-token" if label == "first" else "second-tok"
+        return MintedCredential(KIND_TOKEN, {"token": tok}, None, label)
+
+    def describe(self, settings: Mapping[str, object]) -> Grant:
+        return Grant("", "", "", "", "tracking")
+
+
+class TestLabelResolution(unittest.TestCase):
+
+    def setUp(self) -> None:
+        import tempfile, shutil
+        self.stage = Path(tempfile.mkdtemp(prefix="label-test."))
+        self.addCleanup(shutil.rmtree, self.stage, ignore_errors=True)
+        self.addCleanup(use_bottle_root(self.stage / "root"))
+
+    def _mint(self, credentials: dict[str, Any], prov: CredentialProvider) -> None:
+        from bot_bottle.control.hostctl.cred_mint import mint_cred_block
+        plan = FirecrackerBottlePlan(**_stage_fields(self.stage, {"credentials": credentials}))
+        with mock.patch("bot_bottle.secret_source.FileSecrets", _no_file_secrets):
+            mint_cred_block(plan, _SLUG, MappingSecrets({"TOK": "secret-tok"}),
+                            registry=_registry_with(prov))
+
+    def test_dollar_label_in_settings_resolved(self) -> None:
+        """A later credential's `$first` setting is the minted token of `first`
+        by the time it is minted. (`harness` is the one setting host_login
+        accepts, so the manifest takes it.)"""
+        prov = _TrackingProvider()
+        self._mint({
+            "first": {"source": _FAKE_SOURCE},
+            "second": {"source": _FAKE_SOURCE, "harness": "$first"},
+        }, prov)
+        self.assertEqual(prov.received["second"].get("harness"), "first-token")
+
+    def test_dollar_label_resolves_a_secret_credential(self) -> None:
+        prov = _TrackingProvider()
+        self._mint({
+            "api": {"source": "secret", "secret": "TOK"},
+            "second": {"source": _FAKE_SOURCE, "harness": "$api"},
+        }, prov)
+        self.assertEqual(prov.received["second"].get("harness"), "secret-tok")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -14,15 +14,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...credentials import (
-    KIND_TOKEN, CredentialProvider, CredentialRegistry, MintedCredential, default_registry,
+    KIND_SSH_KEY, KIND_TOKEN, CredentialProvider, CredentialRegistry, MintedCredential,
+    default_registry,
 )
 from ...egress.service import cred_token_ref
 from ...lib import log
+from ...manifest.credentials import is_cred_ref, parse_cred_label
 from ...paths import host_secrets_path
 from ...secret_source import SecretSource
 
 if TYPE_CHECKING:
     from ...backend.plan import BottlePlan
+    from ...manifest.credentials import ManifestCredential
 
 # (label, minted, provider, settings, renewal_secrets, slots)
 # `slots` maps each kind field (usually "token") to the EGRESS_TOKEN_N names
@@ -46,11 +49,17 @@ def mint_cred_block(
 ) -> tuple["BottlePlan", list[CredEntry]]:
     """Mint all `credentials:` block entries that need live values.
 
-    - `source: secret` credentials are skipped: they already resolve from the
-      host secrets store via `EgressTokenSecrets._route_refs`.
-    - All other sources (host_login, prompt, …) are minted here; their token
-      values are injected into `plan.minted_cred_values` so `egress_secrets`
-      can find them when `launch()` calls `registration_tokens()`.
+    - `source: secret` token and aws credentials are skipped: they already
+      resolve from the host secrets store via `EgressTokenSecrets._route_refs`.
+      Their values are still collected for `$label` references.
+    - `source: secret, kind: ssh-key` has no such path (git-gate reads the key
+      from a file), so it is minted here like every other source.
+    - Token values go into `plan.minted_cred_values` so `egress_secrets` can
+      find them when `launch()` calls `registration_tokens()`; ssh-key values
+      go into `plan.minted_ssh_keys` for git-gate to write as key files.
+    - Settings values of the form `$label` are resolved to the value of the
+      credential named `label`, which must come earlier in the block
+      (declaration order; unknown labels and cycles fail at manifest load).
     - The returned `cred_entries` list is passed to `CredentialRenewer.add()`
       after the bottle is running.
     - `launch_secrets` (the launch-time `LaunchSecrets` with `request.answers`)
@@ -65,33 +74,95 @@ def mint_cred_block(
     from ...secret_source import FileSecrets  # pylint: disable=import-outside-toplevel
     renewal_secrets = FileSecrets(host_secrets_path())
 
+    # label -> token value, and label -> every field, for `$label` resolution.
+    resolved_tokens: dict[str, str] = {}
+    resolved_all_fields: dict[str, dict[str, str]] = {}
+
     minted_values: dict[str, str] = {}
+    minted_ssh_keys: dict[str, dict[str, str]] = {}
     cred_entries: list[CredEntry] = []
 
     for label, cred in credentials.items():
-        if cred.source == "secret":
+        if cred.source == "secret" and cred.kind != KIND_SSH_KEY:
+            _collect_secret_tokens(label, cred, launch_secrets, resolved_tokens,
+                                   resolved_all_fields)
             continue
 
         provider = reg.get(cred.source)
         if provider is None:
             continue
 
-        minted = provider.mint(label, identity, cred.settings, launch_secrets)
+        settings = _resolve_settings(cred.settings, resolved_tokens, resolved_all_fields)
+        minted = provider.mint(label, identity, settings, launch_secrets)
+        resolved_all_fields[label] = dict(minted.values)
 
         token_ref = cred_token_ref(label, cred)
 
         if cred.kind == KIND_TOKEN:
-            minted_values[token_ref] = minted.values.get("token", "")
+            token_val = minted.values.get("token", "")
+            resolved_tokens[label] = token_val
+            minted_values[token_ref] = token_val
+        elif cred.kind == KIND_SSH_KEY:
+            minted_ssh_keys[label] = dict(minted.values)
 
         slots = _build_slots(plan.egress_plan.token_env_map, token_ref, minted)
-        cred_entries.append((label, minted, provider, cred.settings, renewal_secrets, slots))
+        cred_entries.append((label, minted, provider, settings, renewal_secrets, slots))
 
-    if not minted_values and not cred_entries:
+    if not minted_values and not minted_ssh_keys and not cred_entries:
         return plan, []
 
     updated = dataclasses.replace(
-        plan, minted_cred_values={**plan.minted_cred_values, **minted_values})
+        plan,
+        minted_cred_values={**plan.minted_cred_values, **minted_values},
+        minted_ssh_keys={**plan.minted_ssh_keys, **minted_ssh_keys},
+    )
     return updated, cred_entries
+
+
+def _collect_secret_tokens(
+    label: str,
+    cred: "ManifestCredential",
+    secrets: SecretSource,
+    resolved_tokens: dict[str, str],
+    resolved_all_fields: dict[str, dict[str, str]],
+) -> None:
+    """Add a `source: secret` credential's values to the resolution maps."""
+    if cred.kind == KIND_TOKEN:
+        name = cred.settings.get("secret")
+        if isinstance(name, str):
+            val = secrets.get(name) or ""
+            resolved_tokens[label] = val
+            resolved_all_fields[label] = {"token": val}
+        return
+    fields: dict[str, str] = {}
+    for field_name in ("access_key_id", "secret_access_key", "session_token"):
+        name = cred.settings.get(field_name)
+        if isinstance(name, str):
+            fields[field_name] = secrets.get(name) or ""
+    resolved_all_fields[label] = fields
+
+
+def _resolve_settings(
+    settings: Mapping[str, object],
+    resolved_tokens: Mapping[str, str],
+    resolved_all_fields: Mapping[str, Mapping[str, str]],
+) -> dict[str, object]:
+    """`settings` with each `$label` value replaced by that credential's value:
+    its `token` field, or else its first field. An unknown label passes through
+    unchanged (manifest validation has already refused it)."""
+    out: dict[str, object] = {}
+    for key, value in settings.items():
+        if isinstance(value, str) and is_cred_ref(value):
+            ref = parse_cred_label(value)
+            if ref in resolved_tokens:
+                out[key] = resolved_tokens[ref]
+            elif ref in resolved_all_fields:
+                out[key] = next(iter(resolved_all_fields[ref].values()), "")
+            else:
+                out[key] = value
+        else:
+            out[key] = value
+    return out
 
 
 def _build_slots(
@@ -99,15 +170,38 @@ def _build_slots(
     token_ref: str,
     minted: MintedCredential,
 ) -> dict[str, tuple[str, ...]]:
-    """The `EGRESS_TOKEN_N` slots that carry each of `minted.values`'s fields.
-
-    For `token` kind (one field), every slot whose `token_ref` matches maps to
-    the `"token"` field. Other kinds are deferred to later chunks.
-    """
+    """The `EGRESS_TOKEN_N` slots that carry each of `minted.values`'s fields."""
     matching = tuple(slot for slot, ref in token_env_map.items() if ref == token_ref)
     if not matching:
         return {}
     return {field: matching for field in minted.values}
+
+
+def _rewrite_cred_key_files(
+    slug: str, entry: Any, minted: MintedCredential,
+) -> None:
+    """Re-write the SSH key file(s) for a credential-backed git-gate repo after
+    a daemon restart.  `entry.git_entry_names` names the repos; each gets a
+    `{name}-key` file in the git-gate stage dir for the bottle `slug`."""
+    git_names = getattr(entry, "git_entry_names", ())
+    if not git_names:
+        return
+    private_key = minted.values.get("private_key", "")
+    if not private_key:
+        log.warn(f"bottle {slug}: credential {entry.label!r} minted no private_key; "
+                 f"git-gate repos {list(git_names)} may lose SSH access after restart")
+        return
+    from ...bottle_state import git_gate_state_dir  # pylint: disable=import-outside-toplevel
+    stage_dir = git_gate_state_dir(slug)
+    try:
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        for git_name in git_names:
+            key_file = stage_dir / f"{git_name}-key"
+            key_file.write_text(private_key)
+            key_file.chmod(0o600)
+    except OSError as exc:
+        log.warn(f"bottle {slug}: couldn't re-write credential key files for "
+                 f"{entry.label!r}: {exc}")
 
 
 def recredential(
@@ -136,6 +230,8 @@ def recredential_block(
     cred_renewer: Any,
     push: Callable[[str, str, str, str], None],
     secrets_path: Path | None = None,
+    *,
+    registry: CredentialRegistry | None = None,
 ) -> None:
     """Re-mint a re-adopted bottle's `credentials:` block and register them."""
     # pylint: disable=import-outside-toplevel
@@ -155,7 +251,7 @@ def recredential_block(
     if bottle is None:
         return
     env_var_secret = read_env_var_secret(bottle)
-    reg = _reg()
+    reg = registry or _reg()
     secrets = FileSecrets(secrets_path or host_secrets_path())
     cred_entries = []
     for entry in adopted.cred_block.entries:
@@ -166,6 +262,8 @@ def recredential_block(
             continue
         try:
             minted = provider.mint(entry.label, record.id, entry.settings, secrets)
+            if entry.kind == KIND_SSH_KEY:
+                _rewrite_cred_key_files(record.id, entry, minted)
             for field_name, slot_list in entry.slots.items():
                 value = minted.values.get(field_name, "")
                 for slot in slot_list:

@@ -11,8 +11,8 @@ Kind constants name what a minted credential is:
 - `aws`     — `access_key_id`, `secret_access_key`, optional `session_token`.
 - `ssh-key` — `private_key`, `public_key`: only git-gate uses it.
 
-Chunk 1 ships the `secret` and `prompt` sources. `assume_role`, `profile`,
-`host_login`, `file`, and `gitea_deploy_key` come in later chunks.
+Built-in sources: `secret`, `prompt`, `host_login`, `file` and
+`gitea_deploy_key`. `assume_role` and `profile` come in a later chunk.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import importlib.util
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import ClassVar
@@ -72,6 +72,9 @@ class MintedCredential:
     expires_at: datetime | None
     # Who it acts as (for audit); never a secret value.
     principal: str
+    # Opaque provider-specific data for `retire()` (e.g. a key_id to revoke).
+    # Never forwarded to the agent or logged.
+    retire_data: Mapping[str, str] = field(default_factory=dict)
 
     def __repr__(self) -> str:
         return (f"MintedCredential(kind={self.kind!r}, "
@@ -246,10 +249,145 @@ class _HostLoginProvider(CredentialProvider):
         )
 
 
+class _FileProvider(CredentialProvider):
+    """A credential read from files on the host.
+
+    - `kind: ssh-key` (implied): `private_key_path:` names the private key;
+      `public_key_path:` names the public half, defaulting to the private
+      key's path plus `.pub` when that file exists (git-gate only needs the
+      private key, so a missing public key is empty).
+    - `kind: token`: `path:` names the file; its trimmed content is the token.
+
+    `~` is expanded. The named files are part of the trust hash (`file_fields`).
+    `renew` (the default, mint again) re-reads them.
+
+    Not `project_definable`: a long-lived personal key on the host shouldn't
+    reach a project bottle.
+    """
+
+    source = "file"
+    kinds = (KIND_SSH_KEY, KIND_TOKEN)
+    project_definable = False
+    file_fields: ClassVar[tuple[str, ...]] = ("path", "private_key_path", "public_key_path")
+
+    def mint(self, label: str, bottle_id: str,
+             settings: Mapping[str, object], secrets: SecretSource) -> MintedCredential:
+        kind = str(settings.get("kind", KIND_SSH_KEY))
+        if kind == KIND_TOKEN:
+            path = _required_file(label, settings, "path", "kind 'token'")
+            value = path.read_text(encoding="utf-8").strip()
+            return MintedCredential(KIND_TOKEN, {"token": value}, None, f"file:{path}")
+        if kind == KIND_SSH_KEY:
+            priv_path = _required_file(label, settings, "private_key_path", "kind 'ssh-key'")
+            pub_setting = settings.get("public_key_path")
+            if isinstance(pub_setting, str) and pub_setting:
+                pub_path = _required_file(label, settings, "public_key_path", "kind 'ssh-key'")
+            else:
+                pub_path = Path(str(priv_path) + ".pub")
+            pub = pub_path.read_text(encoding="utf-8").strip() if pub_path.is_file() else ""
+            return MintedCredential(KIND_SSH_KEY, {
+                "private_key": priv_path.read_text(encoding="utf-8"),
+                "public_key": pub,
+            }, None, f"file:{priv_path}")
+        raise ValueError(f"credential {label!r}: source 'file' does not support kind {kind!r}")
+
+    def describe(self, settings: Mapping[str, object]) -> Grant:
+        kind = str(settings.get("kind", KIND_SSH_KEY))
+        where = settings.get("path" if kind == KIND_TOKEN else "private_key_path", "?")
+        return Grant(acts_as="", authority="", scope="",
+                     lifetime="doesn't expire", starts_from=f"file: {where}")
+
+
+def _required_file(label: str, settings: Mapping[str, object], key: str, what: str) -> Path:
+    """`settings[key]` as an existing file path, `~` expanded."""
+    raw = settings.get(key)
+    if not isinstance(raw, str) or not raw:
+        raise ValueError(
+            f"credential {label!r}: source 'file' with {what} requires "
+            f"'{key}: /path/to/file'")
+    path = Path(raw).expanduser()
+    if not path.is_file():
+        raise ValueError(f"credential {label!r}: source 'file': {key} not found: {path}")
+    return path
+
+
+class _GiteaDeployKeyProvider(CredentialProvider):
+    """A per-bottle ed25519 deploy key on a Gitea repository.
+
+    Mints a fresh keypair, registers the public half with the Gitea API, and
+    revokes it at teardown. `token` must resolve to a Gitea personal access
+    token (use `$label` for a credential defined earlier in the same block).
+
+    `project_definable`: a scoped key, revoked at teardown, is safer than a
+    raw secret.
+    """
+
+    source = "gitea_deploy_key"
+    kinds = (KIND_SSH_KEY,)
+    project_definable = True
+
+    def mint(self, label: str, bottle_id: str,
+             settings: Mapping[str, object], secrets: SecretSource) -> MintedCredential:
+        api_url, token, repo, read_only = self._required(label, settings)
+        from .deploy_key_provisioner import get_provisioner  # pylint: disable=import-outside-toplevel
+        title = f"bot-bottle:{bottle_id}:{label}"
+        prov = get_provisioner("gitea", token, api_url)
+        # create() generates the keypair, registers the public half with Gitea,
+        # and returns (key_id, private_key_bytes).
+        key_id, priv_bytes = prov.create(repo, title, read_only=read_only)
+        return MintedCredential(
+            KIND_SSH_KEY,
+            {"private_key": priv_bytes.decode(), "public_key": ""},
+            None,
+            f"gitea_deploy_key:{repo}",
+            retire_data={"key_id": key_id, "api_url": api_url, "token": token, "repo": repo},
+        )
+
+    def retire(self, label: str, bottle_id: str, current: MintedCredential) -> None:
+        rd = current.retire_data
+        key_id = rd.get("key_id", "")
+        api_url = rd.get("api_url", "")
+        token = rd.get("token", "")
+        repo = rd.get("repo", "")
+        if not all([key_id, api_url, token, repo]):
+            return
+        from .deploy_key_provisioner import get_provisioner  # pylint: disable=import-outside-toplevel
+        get_provisioner("gitea", token, api_url).delete(repo, key_id)
+        log.info("credential %r: revoked Gitea deploy key %s on %s", label, key_id, repo)
+
+    def describe(self, settings: Mapping[str, object]) -> Grant:
+        repo = settings.get("repo", "?")
+        api_url = settings.get("api_url", "")
+        read_only = bool(settings.get("read_only", True))
+        return Grant(
+            acts_as=f"deploy key on {repo}",
+            authority=str(api_url),
+            scope="read-only" if read_only else "read-write",
+            lifetime="until teardown (key revoked)",
+            starts_from="Gitea API",
+        )
+
+    @staticmethod
+    def _required(label: str, settings: Mapping[str, object]) -> tuple[str, str, str, bool]:
+        api_url = str(settings.get("api_url", "")).strip()
+        token = str(settings.get("token", "")).strip()
+        repo = str(settings.get("repo", "")).strip()
+        read_only = bool(settings.get("read_only", True))
+        missing = [k for k, v in [("api_url", api_url), ("token", token), ("repo", repo)] if not v]
+        if missing:
+            raise ValueError(
+                f"credential {label!r}: source 'gitea_deploy_key' requires: "
+                + ", ".join(missing)
+            )
+        return api_url, token, repo, read_only
+
+
 _BUILTIN_PROVIDERS: tuple[CredentialProvider, ...] = (
     _SecretProvider(),
     _PromptProvider(),
     _HostLoginProvider(),
+    _FileProvider(),
+    _GiteaDeployKeyProvider(),
 )
 
 
