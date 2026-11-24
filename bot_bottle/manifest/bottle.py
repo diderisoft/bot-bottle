@@ -9,6 +9,10 @@ from typing import Mapping
 
 from .. import secret_ref
 from ..lib.config_store import AUDIT_DELIVERIES
+from .credentials import (
+    ManifestCredential, check_cred_refs, is_cred_ref, parse_cred_label,
+    parse_credentials_block,
+)
 from .util import ManifestError, as_json_object
 from .egress import ManifestEgressConfig
 from .forges import ManifestForge
@@ -23,6 +27,10 @@ __all__ = ["ManifestBottle"]
 
 
 def _empty_str_dict() -> dict[str, str]:
+    return {}
+
+
+def _empty_cred_dict() -> dict[str, ManifestCredential]:
     return {}
 
 
@@ -112,6 +120,9 @@ class ManifestBottle:
     # launch (ADR 0021): one that isn't makes the bottle partial.
     granted_forges: frozenset[str] = frozenset()
     declared_forges: frozenset[str] = frozenset()
+    # Credentials declared in `credentials:` {label → ManifestCredential}.
+    credentials: Mapping[str, ManifestCredential] = field(
+        default_factory=_empty_cred_dict)
     # Fields the source declared, so an explicit `false` survives extends
     # merging.
     declared_fields: frozenset[str] = frozenset()
@@ -166,6 +177,8 @@ class ManifestBottle:
             )
 
         env: dict[str, str] = {}
+        # Maps env-var name → credential label for $label refs in env.
+        env_cred_vars: dict[str, str] = {}
         env_raw = d.get("env")
         if env_raw is not None:
             env_dict = as_json_object(env_raw, f"bottle '{name}' env")
@@ -176,8 +189,13 @@ class ManifestBottle:
                         f"(was {type(value).__name__}). Write \"?<message>\" (asked at "
                         f"launch), \"${{VAR}}\" (from your environment) or \"secret:NAME\" "
                         f"(from the secrets file); \"secret:?\" and \"secret:${{VAR}}\" "
-                        f"mark the first two secret."
+                        f"mark the first two secret. Use \"$label\" for a credential."
                     )
+                if is_cred_ref(value):
+                    # `$label` → credential placeholder; validated in check_cred_refs.
+                    env_cred_vars[var] = parse_cred_label(value)
+                    env[var] = value
+                    continue
                 # A prompt entry falls back to the secret saved under its
                 # own name, so the name can't be a reserved one either.
                 problem = secret_ref.reserved_problem(var) or secret_ref.problem(value)
@@ -236,11 +254,24 @@ class ManifestBottle:
         resources = (ManifestResources.from_dict(name, d["resources"]) if "resources" in d
                      else ManifestResources())
 
+        credentials = parse_credentials_block(name, d.get("credentials"))
+
+        # Collect $label refs in egress route auth for cross-validation.
+        route_cred_labels = frozenset(
+            r.CredLabel for r in egress.routes if r.CredLabel
+        )
+
+        # git-gate $label (ssh-key credentials) is deferred to chunk 3.
+        check_cred_refs(
+            name, credentials, env_cred_vars,
+            route_cred_labels, frozenset(),
+        )
+
         return cls(
             env=env, git=git,
             git_user=git_user, git_trailers=git_trailers,
             git_protect_default_branch=protect_default, git_create=git_create, egress=egress,
             supervise=supervise_raw,
             nested_containers=nested_raw, preserve_container=preserve_raw, audit=audit,
-            resources=resources, declared_fields=frozenset(d),
+            resources=resources, credentials=credentials, declared_fields=frozenset(d),
         )

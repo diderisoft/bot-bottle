@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 from .. import secret_ref
+from .credentials import is_cred_ref, parse_cred_label
 from .util import ManifestError, OldFormError, as_json_object
 
 EGRESS_AUTH_SCHEMES = ("Bearer", "token")
@@ -84,9 +85,13 @@ class ManifestEgressRoute:
     AuthHeader: str = ""
     # The secret whose value is sent: `auth.value: secret:NAME` gives NAME
     # (from the store); `secret:${VAR}` gives VAR, with TokenFromEnv (from the
-    # launching environment).
+    # launching environment); `$label` gives the credential label (CredLabel),
+    # resolved to a TokenRef at launch by the host controller.
     TokenRef: str = ""
     TokenFromEnv: bool = False
+    # Set when auth.value is `$label`; the host controller resolves it to a
+    # TokenRef at launch. Mutually exclusive with TokenRef and TokenFromEnv.
+    CredLabel: str = ""
     Role: tuple[str, ...] = ()
     GitFetch: bool = False
     # From `dlp`: None is the default set, () none, else exactly these.
@@ -136,10 +141,10 @@ class ManifestEgressRoute:
         elif route_methods is not None:
             matches = (ManifestMatchEntry(Methods=route_methods),)
 
-        auth_scheme = auth_header = token_ref = ""
+        auth_scheme = auth_header = token_ref = cred_label = ""
         token_from_env = False
         if "auth" in d:
-            auth_scheme, auth_header, token_ref, token_from_env = _parse_auth(
+            auth_scheme, auth_header, token_ref, token_from_env, cred_label = _parse_auth(
                 label, bottle_name, host, d.get("auth"))
 
         git_fetch = False
@@ -169,6 +174,7 @@ class ManifestEgressRoute:
             AuthHeader=auth_header,
             TokenRef=token_ref,
             TokenFromEnv=token_from_env,
+            CredLabel=cred_label,
             GitFetch=git_fetch,
             OutboundDetectors=outbound,
             InboundDetectors=inbound,
@@ -318,13 +324,13 @@ OLD_AUTH_KEYS = ("scheme", "header", "token_ref")
 
 
 def _parse_auth(label: str, bottle: str, host: str,
-                raw: object) -> tuple[str, str, str, bool]:
-    """A route's `auth` as (scheme, header, secret name, from env), the fields
-    the gateway takes:
+                raw: object) -> tuple[str, str, str, bool, str]:
+    """A route's `auth` as (scheme, header, secret name, from env, cred label).
 
       { type: bearer, value: secret:NAME }            Authorization: Bearer <v>
       { type: token,  value: secret:NAME }            Authorization: token <v>
       { type: header, name: X-Api-Key, value: ... }   X-Api-Key: <v> (raw)
+      { type: bearer, value: $label }                 cred label resolved at launch
     """
     auth = as_json_object(raw, f"{label} auth")
     if not auth:
@@ -346,37 +352,43 @@ def _parse_auth(label: str, bottle: str, host: str,
     if kind != "header":
         if name is not None:
             raise ManifestError(f"{label} auth.name is only for type: header")
-        return (AUTH_TYPES[kind], "", *_auth_token(label, auth))
+        token_ref, from_env, cred_label = _auth_token(label, auth)
+        return (AUTH_TYPES[kind], "", token_ref, from_env, cred_label)
     if not isinstance(name, str) or not name:
         raise ManifestError(f"{label} auth.name (the header) is required with type: header")
     if not _HEADER_NAME.match(name):
         raise ManifestError(f"{label} auth.name {name!r} is not a valid HTTP header name")
     if name.lower() in RESERVED_AUTH_HEADERS:
         raise ManifestError(f"{label} auth.name {name!r} is reserved")
-    return ("", name.lower(), *_auth_token(label, auth))
+    token_ref, from_env, cred_label = _auth_token(label, auth)
+    return ("", name.lower(), token_ref, from_env, cred_label)
 
 
-def _auth_token(label: str, auth: dict[str, object]) -> tuple[str, bool]:
-    """An auth block's secret: (NAME, False) from `value: secret:NAME` (the
-    store), (VAR, True) from `secret:${VAR}` (the launching env). Not asked
-    for (`secret:?`, `?`), not a plain `${VAR}` or a literal."""
+def _auth_token(label: str, auth: dict[str, object]) -> tuple[str, bool, str]:
+    """An auth block's secret as (token_ref, from_env, cred_label):
+    - `secret:NAME`   → (NAME, False, "")  — from the store
+    - `secret:${VAR}` → (VAR,  True,  "")  — from the launching env
+    - `$label`        → ("",   False, label) — credential resolved at launch
+    Not accepted: `secret:?`, `?`, plain `${VAR}`, bare literals."""
     value = auth.get("value")
     if not isinstance(value, str) or not value:
         raise ManifestError(
             f"{label} auth.value is required when 'auth' is set "
-            f"(value: secret:NAME, NAME in the secrets file)")
+            f"(value: secret:NAME, or $label for a credential)")
+    if is_cred_ref(value):
+        return "", False, parse_cred_label(value)
     ref = secret_ref.parse(value)
     if ref.secret and ref.kind == secret_ref.HOST_ENV:
-        return ref.name, True
+        return ref.name, True, ""
     if ref.kind != secret_ref.STORED:
         why = (" (a route's secret is resolved where no one may be there to type it, so "
                "secret:? isn't taken here)" if ref.secret else "")
-        raise ManifestError(f"{label} auth.value takes secret:NAME or secret:${{VAR}} "
-                            f"(was {_shown(value)}){why}")
+        raise ManifestError(f"{label} auth.value takes secret:NAME, secret:${{VAR}}, or "
+                            f"$label (credential) (was {_shown(value)}){why}")
     problem = secret_ref.problem(value)
     if problem:
         raise ManifestError(f"{label} auth.value {problem}")
-    return ref.name, False
+    return ref.name, False, ""
 
 
 def _shown(value: str) -> str:
