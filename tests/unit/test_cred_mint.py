@@ -14,7 +14,7 @@ from unittest import mock
 from bot_bottle.agent_provider import AgentProvisionPlan
 from bot_bottle.backend import BottleSpec
 from bot_bottle.backend.adoption import (
-    AdoptedCredBlock, AdoptedCredEntry, cred_block_for,
+    AdoptedCredBlock, AdoptedCredEntry, AdoptionRecord, cred_block_for,
 )
 from bot_bottle.backend.firecracker.bottle_plan import FirecrackerBottlePlan
 from bot_bottle.credentials import (
@@ -420,3 +420,103 @@ class TestForgesCredentialsRaw(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── recredential_block / audit_cred_entries ───────────────────────────────────
+
+_REC = "bottle-rec-1"
+
+
+def _record(*entries: AdoptedCredEntry) -> AdoptionRecord:
+    return AdoptionRecord(container="c", registry_id="reg-1",
+                          cred_block=AdoptedCredBlock(entries) if entries else None)
+
+
+def _entry(label: str = "tok", source: str = _FAKE_SOURCE) -> AdoptedCredEntry:
+    return AdoptedCredEntry(label=label, source=source, kind="token",
+                            settings={"harness": "claude"},
+                            slots={"token": ["EGRESS_TOKEN_0", "EGRESS_TOKEN_1"]})
+
+
+class TestRecredentialBlock(unittest.TestCase):
+    """A restarted host controller re-mints an adopted bottle's credentials,
+    pushes the values into their egress slots and re-registers them."""
+
+    def _run(self, record: AdoptionRecord | None, *providers: CredentialProvider,
+             attach: Any = None) -> tuple[mock.Mock, mock.Mock]:
+        from bot_bottle.control.hostctl.cred_mint import recredential_block
+        backend = mock.Mock()
+        if isinstance(attach, Exception):
+            backend.attach_adopted.side_effect = attach
+        else:
+            backend.attach_adopted.return_value = attach if attach is not None else mock.Mock()
+        renewer, push = mock.Mock(), mock.Mock()
+        with mock.patch("bot_bottle.backend.adoption.read", return_value=record), \
+             mock.patch("bot_bottle.credentials.default_registry",
+                        return_value=_registry_with(*providers)), \
+             mock.patch("bot_bottle.secret_source.FileSecrets", _no_file_secrets), \
+             mock.patch("bot_bottle.control.hostctl.credential_refresh.read_env_var_secret",
+                        return_value="evsec"):
+            recredential_block(mock.Mock(id=_REC), backend, renewer, push,
+                               secrets_path=Path("/nonexistent"))
+        return renewer, push
+
+    def test_remints_pushes_each_slot_and_registers(self) -> None:
+        renewer, push = self._run(_record(_entry()), _FakeMintProvider(token="fresh"))
+        self.assertEqual(push.call_args_list, [
+            mock.call("reg-1", "EGRESS_TOKEN_0", "fresh", "evsec"),
+            mock.call("reg-1", "EGRESS_TOKEN_1", "fresh", "evsec"),
+        ])
+        renewer.add.assert_called_once()
+        bottle_id, registry_id, evsec, entries = renewer.add.call_args.args
+        self.assertEqual((bottle_id, registry_id, evsec), (_REC, "reg-1", "evsec"))
+        label, minted, _, settings, _, slots = entries[0]
+        self.assertEqual(label, "tok")
+        self.assertEqual(minted.values["token"], "fresh")
+        self.assertEqual(settings, {"harness": "claude"})
+        self.assertEqual(slots, {"token": ("EGRESS_TOKEN_0", "EGRESS_TOKEN_1")})
+
+    def test_nothing_adopted_is_a_no_op(self) -> None:
+        for record in (None, _record()):
+            renewer, push = self._run(record, _FakeMintProvider())
+            push.assert_not_called()
+            renewer.add.assert_not_called()
+
+    def test_unknown_source_is_skipped(self) -> None:
+        renewer, push = self._run(_record(_entry(source="nope")), _FakeMintProvider())
+        push.assert_not_called()
+        renewer.add.assert_not_called()
+
+    def test_mint_failure_is_skipped(self) -> None:
+        renewer, _ = self._run(_record(_entry()), _FailingProvider())
+        renewer.add.assert_not_called()
+
+    def test_attach_failure_gives_up(self) -> None:
+        renewer, push = self._run(_record(_entry()), _FakeMintProvider(),
+                                  attach=RuntimeError("gone"))
+        push.assert_not_called()
+        renewer.add.assert_not_called()
+
+    def test_unattachable_bottle_gives_up(self) -> None:
+        from bot_bottle.control.hostctl.cred_mint import recredential_block
+        backend = mock.Mock()
+        backend.attach_adopted.return_value = None
+        renewer, push = mock.Mock(), mock.Mock()
+        with mock.patch("bot_bottle.backend.adoption.read", return_value=_record(_entry())):
+            recredential_block(mock.Mock(id=_REC), backend, renewer, push)
+        push.assert_not_called()
+        renewer.add.assert_not_called()
+
+
+class TestAuditCredEntries(unittest.TestCase):
+    def test_one_minted_event_per_entry(self) -> None:
+        from bot_bottle.control.hostctl.cred_mint import audit_cred_entries
+        prov = _FakeMintProvider()
+        minted = MintedCredential(KIND_TOKEN, {"token": "t"}, EXPIRES, "fake:tok")
+        audit = mock.Mock()
+        audit_cred_entries([("tok", minted, prov, {}, MappingSecrets({}), {})],
+                           audit, _REC, "act-1")
+        audit.credential_event.assert_called_once_with(
+            "credential.minted", bottle=_REC, activation="act-1",
+            harness="credentials", label="tok", cred_kind=KIND_TOKEN,
+            source=_FAKE_SOURCE, principal="fake:tok")
