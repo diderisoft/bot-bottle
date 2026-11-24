@@ -248,7 +248,7 @@ class TestSettingsValueForms(unittest.TestCase):
 
     def test_reserved_secret_name_refused(self) -> None:
         with self.assertRaisesRegex(ManifestError, "reserved"):
-            _creds({"k": {"source": "assume_role", "role": "secret:BB_HOST_TOKEN"}})
+            _creds({"k": {"source": "assume_role", "role_arn": "secret:BB_HOST_TOKEN"}})
 
 
 class TestFileSettings(unittest.TestCase):
@@ -394,6 +394,89 @@ class TestManifestBottleCredentials(unittest.TestCase):
         route = b.egress.routes[0]
         self.assertEqual(route.CredLabel, "my-token")
         self.assertEqual(route.AuthHeader, "x-api-key")
+
+
+class TestAssumeRoleCredentialManifest(unittest.TestCase):
+    def test_valid_minimal(self) -> None:
+        creds = _creds({"role": {
+            "source": "assume_role",
+            "role_arn": "arn:aws:iam::123456789012:role/my-role",
+        }})
+        c = creds["role"]
+        self.assertEqual("assume_role", c.source)
+        self.assertEqual("aws", c.kind)
+        self.assertEqual("arn:aws:iam::123456789012:role/my-role", c.settings["role_arn"])
+
+    def test_valid_with_base_ref(self) -> None:
+        creds = _creds({
+            "base-aws": {"source": "secret", "kind": "aws",
+                         "access_key_id": "KEY_ID", "secret_access_key": "KEY_SEC"},
+            "role": {"source": "assume_role",
+                     "role_arn": "arn:aws:iam::123:role/r",
+                     "base": "@base-aws"},
+        })
+        self.assertEqual("@base-aws", creds["role"].settings["base"])
+
+    def test_valid_all_optional_settings(self) -> None:
+        creds = _creds({"role": {
+            "source": "assume_role",
+            "role_arn": "arn:aws:iam::123:role/r",
+            "session_name": "my-sess",
+            "duration_seconds": 7200,
+            "external_id": "ext-123",
+            "region": "eu-west-1",
+        }})
+        s = creds["role"].settings
+        self.assertEqual("my-sess", s["session_name"])
+        self.assertEqual(7200, s["duration_seconds"])
+        self.assertEqual("ext-123", s["external_id"])
+        self.assertEqual("eu-west-1", s["region"])
+
+    def test_missing_role_arn_raises(self) -> None:
+        with self.assertRaisesRegex(ManifestError, "role_arn"):
+            _creds({"role": {"source": "assume_role"}})
+
+    def test_base_non_at_ref_raises(self) -> None:
+        with self.assertRaisesRegex(ManifestError, "base"):
+            _creds({"role": {
+                "source": "assume_role",
+                "role_arn": "arn:aws:iam::123:role/r",
+                "base": "secret:SOME_KEY",
+            }})
+
+    def test_unknown_setting_raises(self) -> None:
+        with self.assertRaisesRegex(ManifestError, "unknown setting"):
+            _creds({"role": {
+                "source": "assume_role",
+                "role_arn": "arn:aws:iam::123:role/r",
+                "extra": "nope",
+            }})
+
+    def test_kind_is_aws(self) -> None:
+        creds = _creds({"role": {
+            "source": "assume_role",
+            "role_arn": "arn:aws:iam::123:role/r",
+        }})
+        self.assertEqual("aws", creds["role"].kind)
+
+    def test_project_definable(self) -> None:
+        creds = _creds({"role": {
+            "source": "assume_role",
+            "role_arn": "arn:aws:iam::123:role/r",
+        }}, project_bottle=True)
+        self.assertEqual("assume_role", creds["role"].source)
+
+    def test_base_dep_validated_in_check_cred_refs(self) -> None:
+        creds = _creds({"role": {
+            "source": "assume_role",
+            "role_arn": "arn:aws:iam::123:role/r",
+            "base": "@ghost-cred",
+        }})
+        with self.assertRaisesRegex(ManifestError, "ghost-cred"):
+            check_cred_refs("b", creds,
+                            env_cred_vars={},
+                            route_cred_labels=frozenset(),
+                            git_key_cred_labels=frozenset())
 
 
 if __name__ == "__main__":

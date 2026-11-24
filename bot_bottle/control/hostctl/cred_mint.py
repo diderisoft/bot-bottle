@@ -17,6 +17,7 @@ from ...credentials import (
     KIND_SSH_KEY, KIND_TOKEN, CredentialProvider, CredentialRegistry, MintedCredential,
     default_registry,
 )
+from ... import sigil_ref as _sigil_ref
 from ...egress.service import cred_token_ref
 from ...lib import log
 from ... import sigil_ref
@@ -39,6 +40,36 @@ CredEntry = tuple[
     SecretSource,
     dict[str, tuple[str, ...]],
 ]
+
+
+def _topo_sort(label_settings: Mapping[str, Mapping[str, object]]) -> list[str]:
+    """Return credential labels in dependency order: deps before dependents.
+
+    Only considers `@label` refs in settings that point to another credential in
+    the same block; other sigils and missing labels are ignored.
+    """
+    def _deps(settings: Mapping[str, object]) -> frozenset[str]:
+        return frozenset(
+            _sigil_ref.cred_label(str(v))
+            for v in settings.values()
+            if isinstance(v, str) and _sigil_ref.is_cred_ref(v)
+            and _sigil_ref.cred_label(str(v)) in label_settings
+        )
+
+    result: list[str] = []
+    visited: set[str] = set()
+
+    def _visit(label: str) -> None:
+        if label in visited:
+            return
+        visited.add(label)
+        for dep in _deps(label_settings[label]):
+            _visit(dep)
+        result.append(label)
+
+    for lbl in label_settings:
+        _visit(lbl)
+    return result
 
 
 def mint_cred_block(
@@ -84,9 +115,12 @@ def mint_cred_block(
     minted_values: dict[str, str] = {}
     minted_ssh_keys: dict[str, dict[str, str]] = {}
     readable: dict[str, dict[str, str]] = {}  # label -> fields, for agent_can_read
+    minted_so_far: dict[str, MintedCredential] = {}
     cred_entries: list[CredEntry] = []
 
-    for label, cred in credentials.items():
+    sorted_labels = _topo_sort({lbl: c.settings for lbl, c in credentials.items()})
+    for label in sorted_labels:
+        cred = credentials[label]
         if cred.source == "secret" and cred.kind != KIND_SSH_KEY:
             _collect_secret_tokens(label, cred, launch_secrets, resolved_tokens,
                                    resolved_all_fields)
@@ -97,7 +131,9 @@ def mint_cred_block(
             continue
 
         settings = _resolve_settings(cred.settings, resolved_tokens, resolved_all_fields)
-        minted = provider.mint(label, identity, settings, launch_secrets)
+        minted = provider.mint(label, identity, settings, launch_secrets,
+                               minted_creds=minted_so_far)
+        minted_so_far[label] = minted
         resolved_all_fields[label] = dict(minted.values)
 
         token_ref = cred_token_ref(label, cred)
@@ -159,10 +195,13 @@ def _resolve_settings(
     resolved_tokens: Mapping[str, str],
     resolved_all_fields: Mapping[str, Mapping[str, str]],
 ) -> dict[str, object]:
-    """`settings` with each `@label` value replaced by that credential's value:
-    its `token` field, or else its first field. An unknown label passes through
-    unchanged (manifest validation has already refused it); a leading `@@`
-    becomes `@`."""
+    """`settings` with each `@label` value replaced by that credential's value.
+
+    Single-field credentials (token): replaced with the token value.
+    Multi-field credentials (aws): the `@label` is preserved so the provider
+    can look up the full object via `minted_creds`. An unknown label passes
+    through unchanged (manifest validation has already refused it); a leading
+    `@@` becomes `@`."""
     out: dict[str, object] = {}
     for key, value in settings.items():
         if isinstance(value, str) and is_cred_ref(value):
@@ -170,7 +209,12 @@ def _resolve_settings(
             if ref in resolved_tokens:
                 out[key] = resolved_tokens[ref]
             elif ref in resolved_all_fields:
-                out[key] = next(iter(resolved_all_fields[ref].values()), "")
+                fields = resolved_all_fields[ref]
+                if len(fields) == 1:
+                    out[key] = next(iter(fields.values()), "")
+                else:
+                    # Multi-field credential: preserve @label for minted_creds lookup.
+                    out[key] = value
             else:
                 out[key] = value
         elif isinstance(value, str):
@@ -269,14 +313,20 @@ def recredential_block(
     reg = registry or _reg()
     secrets = FileSecrets(secrets_path or host_secrets_path())
     cred_entries = []
-    for entry in adopted.cred_block.entries:
+    entries_by_label = {e.label: e for e in adopted.cred_block.entries}
+    sorted_labels = _topo_sort({lbl: e.settings for lbl, e in entries_by_label.items()})
+    minted_so_far: dict[str, MintedCredential] = {}
+    for label in sorted_labels:
+        entry = entries_by_label[label]
         provider = reg.get(entry.source)
         if provider is None:
             log.warn(f"bottle {record.id}: credential {entry.label!r}: "
                      f"unknown source {entry.source!r}; skipping re-mint")
             continue
         try:
-            minted = provider.mint(entry.label, record.id, entry.settings, secrets)
+            minted = provider.mint(entry.label, record.id, entry.settings, secrets,
+                                   minted_creds=minted_so_far)
+            minted_so_far[label] = minted
             if entry.kind == KIND_SSH_KEY:
                 _rewrite_cred_key_files(record.id, entry, minted)
             for field_name, slot_list in entry.slots.items():
