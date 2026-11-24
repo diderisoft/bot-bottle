@@ -101,6 +101,39 @@ def save_patch(identity: str, patch: str) -> Path | None:
     return path
 
 
+def scan_patch_for_secrets(patch: str) -> list[str]:
+    """Scan `patch` with gitleaks; returns a list of `<rule>: <description>` lines
+    for each finding. Empty when gitleaks is not installed or found nothing."""
+    import shutil  # pylint: disable=import-outside-toplevel
+    import subprocess  # pylint: disable=import-outside-toplevel
+    if not shutil.which("gitleaks"):
+        return []
+    try:
+        result = subprocess.run(
+            ["gitleaks", "detect", "--source", "-", "--no-git",
+             "--report-format", "json", "--report-path", "/dev/stdout"],
+            input=patch, capture_output=True, text=True, timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode == 0:
+        return []
+    try:
+        import json  # pylint: disable=import-outside-toplevel
+        findings = json.loads(result.stdout or "[]") or []
+        lines = []
+        for f in findings:
+            rule = str(f.get("RuleID") or "secret")
+            desc = str(f.get("Description") or "")
+            file_ = str(f.get("File") or "")
+            line_num = str(f.get("StartLine") or "")
+            where = f" in {file_}:{line_num}" if file_ else ""
+            lines.append(f"{rule}: {desc}{where}")
+        return lines
+    except (ValueError, TypeError):
+        return []
+
+
 def patch_summary(patch: str) -> tuple[int, int, int]:
     """(files, lines added, lines removed) in a git patch."""
     files = added = removed = 0

@@ -84,6 +84,34 @@ class Patches(unittest.TestCase):
         self.assertIn("git apply", err.getvalue())
         self.assertIn(str(Path("work") / "pi.patch"), err.getvalue())
 
+    def test_gitleaks_findings_warn_before_the_apply_line(self) -> None:
+        from bot_bottle.workspace import scan_patch_for_secrets  # pylint: disable=import-outside-toplevel
+        findings = ["github-token: token at key.py:3"]
+        save_patch("pi", _PATCH)
+        with patch("bot_bottle.cli.launch_client.scan_patch_for_secrets",
+                   return_value=findings), \
+                patch("sys.stderr", new_callable=io.StringIO) as err:
+            _report_work("pi", since=time.time() - 60)
+        output = err.getvalue()
+        self.assertIn("gitleaks found 1 potential secret", output)
+        self.assertIn("github-token: token at key.py:3", output)
+        self.assertIn("git apply", output)  # still offered, with warning before it
+
+    def test_no_gitleaks_binary_is_a_no_op(self) -> None:
+        from bot_bottle.workspace import scan_patch_for_secrets  # pylint: disable=import-outside-toplevel
+        import shutil  # pylint: disable=import-outside-toplevel
+        with patch.object(shutil, "which", return_value=None):
+            self.assertEqual([], scan_patch_for_secrets(_PATCH))
+
+    def test_gitleaks_clean_patch_returns_empty(self) -> None:
+        from bot_bottle.workspace import scan_patch_for_secrets  # pylint: disable=import-outside-toplevel
+        import subprocess  # pylint: disable=import-outside-toplevel
+        from bot_bottle.backend import ExecResult  # pylint: disable=import-outside-toplevel
+        result = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        with patch("shutil.which", return_value="/usr/bin/gitleaks"), \
+                patch("subprocess.run", return_value=result):
+            self.assertEqual([], scan_patch_for_secrets(_PATCH))
+
 
 if __name__ == "__main__":
     unittest.main()

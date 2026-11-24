@@ -29,7 +29,7 @@ from ..lib.prompt import current as current_prompter
 from ..manifest import Manifest, ManifestIndex, trust
 from ..secret_source import SecretSource, tiers
 from ..util import read_tty_line
-from ..workspace import patch_summary, work_patch_path
+from ..workspace import patch_summary, scan_patch_for_secrets, work_patch_path
 from .constants import PROG
 from .progress import LaunchProgress, launch_log_path
 
@@ -261,7 +261,10 @@ def tmux_attach(session_id: str) -> tuple[list[str], dict[str, str]]:
 
 
 def _report_work(session_id: str, *, since: float) -> None:
-    """After the agent exits: what it changed and where the patch is."""
+    """After the agent exits: what it changed and where the patch is.
+
+    Runs a gitleaks scan before printing the apply command; warns (but
+    still offers the patch) when potential secrets are found."""
     path = work_patch_path(session_id)
     try:
         if path.stat().st_mtime < since:
@@ -270,10 +273,20 @@ def _report_work(session_id: str, *, since: float) -> None:
     except OSError:
         return
     files, added, removed = patch_summary(patch)
+    findings = scan_patch_for_secrets(patch)
     try:
         shown = f"~/{path.relative_to(Path.home())}"
     except ValueError:
         shown = str(path)
+    if findings:
+        sys.stderr.write(
+            f"\nbot-bottle: gitleaks found {len(findings)} potential "
+            f"secret{'s' if len(findings) != 1 else ''} in the patch — "
+            "review it before applying:\n")
+        for finding in findings[:5]:
+            sys.stderr.write(f"  {finding}\n")
+        if len(findings) > 5:
+            sys.stderr.write(f"  … ({len(findings) - 5} more)\n")
     sys.stderr.write(
         f"\n{session_id} changed {files} file{'s' if files != 1 else ''} "
         f"(+{added} −{removed}). The changes are saved as a patch:\n  {shown}\n"
