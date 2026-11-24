@@ -22,8 +22,8 @@ from bot_bottle.git_gate import (
     GitGatePlan,
     provision_git_gate_dynamic_keys,
     revoke_git_gate_provisioned_keys,
-    _resolve_identity_file,
 )
+from bot_bottle.git_gate.provision import _resolve_identity_file
 from bot_bottle.errors import MissingEnvVarError
 from bot_bottle.secret_source import MappingSecrets
 from bot_bottle.manifest import ManifestIndex
@@ -656,6 +656,108 @@ class TestShellEscaping(unittest.TestCase):
                     expected, script,
                     f"{label}: expected quoted form not found in script",
                 )
+
+
+_CRED_KEY_INDEX = {
+    "bottles": {"dev": {
+        "credentials": {"my-key": {"source": "secret", "kind": "ssh-key",
+                                   "private_key": "PRIV", "public_key": "PUB"}},
+        "git_gate": {"repos": {"app": {
+            "url": "ssh://git@git.example.com/org/app.git",
+            "key": "@my-key",
+            "host_key": "ssh-ed25519 AAAA...",
+        }}},
+    }},
+    "agents": {"demo": {"skills": [], "prompt": ""}},
+}
+
+
+class TestCredentialKeyEntry(unittest.TestCase):
+    """git_gate.repos key: $label wires a credentials: ssh-key entry."""
+
+    def setUp(self) -> None:
+        self.stage = Path(self.enterContext(tempfile.TemporaryDirectory()))
+
+    def _bottle(self) -> object:
+        return ManifestIndex.from_json_obj(_CRED_KEY_INDEX).bottles["dev"]
+
+    def test_manifest_parses_cred_ref_as_cred_label(self) -> None:
+        bottle = self._bottle()
+        entry = bottle.git[0]
+        self.assertEqual("my-key", entry.CredLabel)
+        self.assertEqual("", entry.Key.provider)
+        self.assertEqual("ssh://git@git.example.com/org/app.git", entry.Upstream)
+
+    def test_manifest_rejects_non_cred_string_key(self) -> None:
+        from bot_bottle.manifest.util import ManifestError  # pylint: disable=import-outside-toplevel
+        bad = {**_CRED_KEY_INDEX, "bottles": {"dev": {
+            **_CRED_KEY_INDEX["bottles"]["dev"],
+            "git_gate": {"repos": {"app": {
+                "url": "ssh://git@git.example.com/org/app.git",
+                "key": "not-a-ref",
+            }}},
+        }}}
+        with self.assertRaisesRegex(ManifestError, "old git-gate format"):
+            ManifestIndex.from_json_obj(bad)
+
+    def test_manifest_validates_cred_must_be_ssh_key_kind(self) -> None:
+        from bot_bottle.manifest.util import ManifestError  # pylint: disable=import-outside-toplevel
+        wrong_kind = {**_CRED_KEY_INDEX, "bottles": {"dev": {
+            "credentials": {"tok": {"source": "secret", "secret": "X"}},
+            "git_gate": {"repos": {"app": {
+                "url": "ssh://git@git.example.com/org/app.git",
+                "key": "@tok",
+            }}},
+        }}}
+        with self.assertRaisesRegex(ManifestError, "ssh-key"):
+            ManifestIndex.from_json_obj(wrong_kind)
+
+    def test_write_cred_key_writes_private_key_file(self) -> None:
+        from bot_bottle.git_gate.provision import _write_cred_key  # pylint: disable=import-outside-toplevel
+        bottle = self._bottle()
+        entry = bottle.git[0]
+        minted_ssh_keys = {"my-key": {"private_key": "PRIV_DATA", "public_key": "PUB_DATA"}}
+        key_path = _write_cred_key(entry, self.stage, minted_ssh_keys)
+        self.assertEqual(str(self.stage / "app-key"), key_path)
+        self.assertEqual("PRIV_DATA", (self.stage / "app-key").read_text())
+
+    def test_write_cred_key_raises_when_no_private_key(self) -> None:
+        from bot_bottle.git_gate.provision import _write_cred_key  # pylint: disable=import-outside-toplevel
+        bottle = self._bottle()
+        entry = bottle.git[0]
+        with self.assertRaisesRegex(ValueError, "private_key"):
+            _write_cred_key(entry, self.stage, {"my-key": {}})
+
+    def test_resolve_identity_file_uses_cred_key(self) -> None:
+        bottle = self._bottle()
+        entry = bottle.git[0]
+        minted = {"my-key": {"private_key": "PRIV", "public_key": "PUB"}}
+        path = _resolve_identity_file(entry, "demo", self.stage, MappingSecrets({}),
+                                      minted_ssh_keys=minted)
+        self.assertEqual(str(self.stage / "app-key"), path)
+
+    def test_provision_dynamic_keys_uses_cred_key(self) -> None:
+        bottle = self._bottle()
+        plan = _StubGate().prepare(bottle, "demo", self.stage, trailer="dev/demo")
+        minted = {"my-key": {"private_key": "PRIV", "public_key": "PUB"}}
+        updated = provision_git_gate_dynamic_keys(
+            bottle, plan, self.stage, MappingSecrets({}), minted_ssh_keys=minted)
+        self.assertEqual(str(self.stage / "app-key"), updated.upstreams[0].identity_file)
+        self.assertEqual("PRIV", (self.stage / "app-key").read_text())
+
+    def test_revoke_skips_cred_backed_entry(self) -> None:
+        bottle = self._bottle()
+        (self.stage / "app-deploy-key-id").write_text("999\n")
+        with patch("bot_bottle.deploy_key_provisioner.get_provisioner") as mock_prov:
+            revoke_git_gate_provisioned_keys(bottle, "demo", self.stage, MappingSecrets({}))
+        mock_prov.assert_not_called()
+
+    def test_trust_grant_shows_credential_label(self) -> None:
+        from bot_bottle.manifest.trust import grants  # pylint: disable=import-outside-toplevel
+        bottle = self._bottle()
+        grant_lines = grants(bottle)
+        repo_line = next(l for l in grant_lines if "app.git" in l)
+        self.assertIn("key from credential 'my-key'", repo_line)
 
 
 if __name__ == "__main__":

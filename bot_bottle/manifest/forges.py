@@ -43,6 +43,7 @@ from urllib.parse import urlparse
 
 from ..contract.forges import FORGE_KINDS, FORGE_LABELS, repo_name, repo_path_ok
 from .legacy_git_gate import OldGitGateFormatError
+from .credentials import is_cred_ref
 from .util import ManifestError, as_json_object
 
 if TYPE_CHECKING:
@@ -452,12 +453,15 @@ def normalize_repos(bottle_name: str, raw: dict[str, object]) -> dict[str, objec
 
 def refuse_long_form(bottle_name: str, repos: "Mapping[str, object]", *,
                      homes: "Mapping[str, ForgeHome] | None" = None) -> None:
-    """A bottle file's own repos, as written: each is a grant, never the long
-    form, whatever its key (ADR 0008, ADR 0023). The error names every such
-    repo, the grant it becomes and the commands that connect it
-    (`manifest/legacy_git_gate.py`). `homes`: the connections to plan with,
-    {} to ask none (a check that mustn't depend on this host)."""
-    if any(not isinstance(v, str) for v in repos.values()):
+    """A bottle file's own repos, as written: each is a grant string, or a
+    credential-backed long form (a dict whose `key:` is a `$label` credential
+    reference). The old long form with an inline key block is refused (ADR 0008,
+    ADR 0023). `homes`: the connections to plan with, {} to ask none."""
+    bad = {k: v for k, v in repos.items()
+           if not isinstance(v, str)
+           and not (isinstance(v, dict) and isinstance(v.get("key"), str)
+                    and is_cred_ref(str(v.get("key", ""))))}
+    if bad:
         raise OldGitGateFormatError(bottle_name, repos, homes=homes)
 
 

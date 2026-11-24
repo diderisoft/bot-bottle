@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
-from .. import secret_ref
+from .. import sigil_ref as secret_ref
 from ..lib.config_store import AUDIT_DELIVERIES
 from .credentials import (
     ManifestCredential, check_cred_refs, is_cred_ref, parse_cred_label,
@@ -189,10 +189,10 @@ class ManifestBottle:
                         f"(was {type(value).__name__}). Write \"?<message>\" (asked at "
                         f"launch), \"${{VAR}}\" (from your environment) or \"secret:NAME\" "
                         f"(from the secrets file); \"secret:?\" and \"secret:${{VAR}}\" "
-                        f"mark the first two secret. Use \"$label\" for a credential."
+                        f"mark the first two secret. Use \"@label\" for a credential."
                     )
                 if is_cred_ref(value):
-                    # `$label` → credential placeholder; validated in check_cred_refs.
+                    # `@label` → credential placeholder; validated in check_cred_refs.
                     env_cred_vars[var] = parse_cred_label(value)
                     env[var] = value
                     continue
@@ -256,15 +256,15 @@ class ManifestBottle:
 
         credentials = parse_credentials_block(name, d.get("credentials"))
 
-        # Collect $label refs in egress route auth for cross-validation.
+        # Collect @label refs in egress route auth for cross-validation.
         route_cred_labels = frozenset(
             r.CredLabel for r in egress.routes if r.CredLabel
         )
 
-        # git-gate $label (ssh-key credentials) is deferred to chunk 3.
+        git_key_cred_labels = frozenset(e.CredLabel for e in git if e.CredLabel)
         check_cred_refs(
             name, credentials, env_cred_vars,
-            route_cred_labels, frozenset(),
+            route_cred_labels, git_key_cred_labels,
         )
 
         return cls(

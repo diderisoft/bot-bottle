@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 from ..contract.forges import API_KINDS
 from ..contract.git_trailers import TRAILER_MODES
+from .. import sigil_ref
+from .credentials import is_cred_ref, parse_cred_label
 from .util import ManifestError, as_json_object
 
 # Shell-safe repo names (they appear in generated scripts, also quoted).
@@ -121,13 +123,17 @@ class ManifestGitEntry:
     UpstreamHost: str = ""
     UpstreamPort: str = ""
     UpstreamPath: str = ""
+    # Set when `key: $label` names a `credentials:` entry instead of a key
+    # block; the host controller writes the minted ssh-key credential to a file
+    # at launch and sets `identity_file` on the upstream.
+    CredLabel: str = ""
 
     @classmethod
     def from_repos_entry(
         cls, bottle_name: str, repo_name: str, raw: object
     ) -> "ManifestGitEntry":
         """Parse `git_gate.repos.<repo_name>`: `url` and `key` required,
-        `host_key` optional."""
+        `host_key` optional. `key` may be `$label` to use a `credentials:` entry."""
         if not repo_name:
             raise ManifestError(
                 f"bottle '{bottle_name}' git_gate.repos has an empty key"
@@ -155,17 +161,31 @@ class ManifestGitEntry:
             raise ManifestError(
                 f"bottle '{bottle_name}' {label} missing required 'key' block"
             )
-        key_config = _parse_key_config(bottle_name, label, d["key"])
 
-        ident = key_config.path if key_config.provider == "ssh" else ""
-
+        user, host, port, path = parse_git_upstream(
+            upstream, f"bottle '{bottle_name}' {label} url"
+        )
         khk = _opt_str(
             d.get("host_key"),
             f"bottle '{bottle_name}' {label} host_key",
         )
-        user, host, port, path = parse_git_upstream(
-            upstream, f"bottle '{bottle_name}' {label} url"
-        )
+
+        key_raw = d["key"]
+        if isinstance(key_raw, str):
+            if not is_cred_ref(key_raw):
+                raise ManifestError(
+                    f"bottle '{bottle_name}' {label}.key: a string key must be a "
+                    f"credential reference like '@my-cred' (was {key_raw!r})"
+                )
+            cred_label = parse_cred_label(key_raw)
+            return cls(
+                Name=repo_name, Upstream=upstream, CredLabel=cred_label,
+                KnownHostKey=khk, RemoteKey=host,
+                UpstreamUser=user, UpstreamHost=host, UpstreamPort=port, UpstreamPath=path,
+            )
+
+        key_config = _parse_key_config(bottle_name, label, key_raw)
+        ident = key_config.path if key_config.provider == "ssh" else ""
         return cls(
             Name=repo_name,
             Upstream=upstream,

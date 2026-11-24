@@ -4,10 +4,11 @@ A credential is a label, a source, its settings, and a kind. The source names
 how it's made; the kind names what it is. When a source makes only one kind the
 kind is implied, so `kind:` is usually omitted.
 
-`$label` refs in `env:` and `auth.value` point here. This module also exposes
-`parse_cred_label` for callers that need to detect a `$label` reference, and
-`check_cred_refs` to validate them after both `credentials:` and `env:`/`egress`
-are parsed.
+`@label` refs in `env:`, `auth.value`, `git_gate.repos.key` and other
+credential settings point here. This module also exposes `is_cred_ref` and
+`cred_label` (delegated to `sigil_ref`) for callers that need to detect an
+`@label` reference, and `check_cred_refs` to validate them after both
+`credentials:` and `env:`/`egress` are parsed.
 """
 
 from __future__ import annotations
@@ -16,16 +17,18 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from .. import sigil_ref
 from ..credentials import (
     ENV_KINDS, KIND_TOKEN,
     KNOWN_KINDS, CredentialRegistry, default_registry,
 )
-from .util import ManifestError, as_json_object
+from .util import ManifestError, as_json_object, as_value_dict
 
-# `$label`: a bare `$` followed by a credential label (kebab-case, same
-# pattern as bottle names). `${VAR}` (braced) is a host-env ref and is
-# handled by `secret_ref`; `$$` is a literal `$` and is stripped by callers.
-_CRED_LABEL_RE = re.compile(r"^\$([a-z][a-z0-9-]*)$")
+# Re-export from sigil_ref so callers that imported these from here still work.
+is_cred_ref = sigil_ref.is_cred_ref
+cred_label = sigil_ref.cred_label
+# Legacy name used by some callers.
+parse_cred_label = sigil_ref.cred_label
 
 # Source names whose `kind` is implied (they mint exactly one kind).
 _IMPLIED_KINDS: dict[str, str] = {
@@ -44,27 +47,10 @@ _SOURCE_SETTINGS: dict[str, frozenset[str]] = {
                          "session_token", "private_key", "public_key"}),
     "prompt": frozenset({"message"}),
     "host_login": frozenset({"harness"}),
-    # Remaining sources are future chunks; their settings are unchecked in
-    # chunk 1 to avoid breaking manifests written against the PRD.
+    "file": frozenset({"kind", "path", "private_key_path", "public_key_path"}),
+    "profile": frozenset({"profile_name"}),
+    # assume_role and gitea_deploy_key: settings unchecked until their chunks.
 }
-
-
-def parse_cred_label(value: str) -> str:
-    """The credential label if `value` is `$label`, else ''."""
-    m = _CRED_LABEL_RE.match(value)
-    return m.group(1) if m else ""
-
-
-def is_cred_ref(value: str) -> bool:
-    """True if `value` is a `$label` credential reference."""
-    return bool(_CRED_LABEL_RE.match(value))
-
-
-def unescape_dollar(value: str) -> str:
-    """Replace a leading `$$` with a literal `$`. Other `$$` are not special."""
-    if value.startswith("$$"):
-        return value[1:]
-    return value
 
 
 @dataclass(frozen=True)
@@ -174,6 +160,18 @@ class ManifestCredential:
         # Source-specific required settings.
         if source == "secret":
             _check_secret_settings(ctx, kind, settings)
+        elif source == "file":
+            _check_file_settings(ctx, kind, settings)
+        else:
+            # For non-secret sources, validate every string value as a valid
+            # sigil expression (secret:NAME, ${VAR}, ?message, @label, literal).
+            # source:secret is exempt — its values are always bare secret names.
+            settings = dict(as_value_dict(settings, ctx))
+
+        # Always store the resolved kind so provider.mint() receives it even
+        # when kind was implied (not written in the manifest) or stripped by
+        # the dict comprehension above.
+        settings["kind"] = kind
 
         return cls(
             label=label, source=source, kind=kind,
@@ -218,14 +216,16 @@ def check_cred_refs(
     route_cred_labels: frozenset[str],
     git_key_cred_labels: frozenset[str],
 ) -> None:
-    """Cross-validate `$label` references after all blocks are parsed.
+    """Cross-validate `@label` references after all blocks are parsed.
 
-    - Every `$label` names an existing credential.
+    - Every `@label` names an existing credential.
     - Kind checks: `env` and bearer/token/header auth take `token` credentials;
       `aws-sigv4` auth takes `aws` credentials; git-gate keys take `ssh-key`.
-    - Unswappable placeholder: a `$label` in `env:` must have at least one
+    - Unswappable placeholder: a `@label` in `env:` must have at least one
       egress route or git-gate key that uses the same credential (otherwise
       the placeholder the agent holds has nowhere to be swapped).
+    - Credential settings that use `@label` must refer to existing credentials,
+      and the resulting dependency graph must be acyclic.
     """
     all_labels = (
         frozenset(env_cred_vars.values())
@@ -248,10 +248,6 @@ def check_cred_refs(
                 f"{cred.kind!r}; env vars only accept {', '.join(sorted(ENV_KINDS))}"
             )
 
-    # Kind checks for auth routes (checked in egress.py at parse time using
-    # the auth scheme; bearer/token/header need token, aws-sigv4 needs aws).
-    # Route-level kind checks are done there to keep context richer.
-
     # Kind checks for git-gate keys.
     for label in git_key_cred_labels:
         cred = credentials[label]
@@ -271,6 +267,72 @@ def check_cred_refs(
                 f"is never swapped — add an egress route that uses {label!r} in "
                 f"its auth, or remove it from env"
             )
+
+    # @label refs in settings: validate existence and check for cycles.
+    dep_graph: dict[str, frozenset[str]] = {}
+    for label, cred in credentials.items():
+        deps = _settings_cred_deps(cred.settings)
+        for dep in deps:
+            if dep not in credentials:
+                raise ManifestError(
+                    f"bottle '{bottle}' credentials.{label}: @{dep} names no "
+                    f"declared credential"
+                )
+        dep_graph[label] = deps
+    _check_cycles(bottle, dep_graph)
+
+
+def _settings_cred_deps(settings: Mapping[str, object]) -> frozenset[str]:
+    """The set of credential labels referenced via @label in `settings`."""
+    deps: set[str] = set()
+    for v in settings.values():
+        if isinstance(v, str) and sigil_ref.is_cred_ref(v):
+            deps.add(sigil_ref.cred_label(v))
+    return frozenset(deps)
+
+
+def _check_cycles(bottle: str, graph: dict[str, frozenset[str]]) -> None:
+    """DFS cycle check on the credential dependency graph."""
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def dfs(node: str, path: list[str]) -> None:
+        if node in visiting:
+            start = path.index(node)
+            cycle = " → ".join(path[start:] + [node])
+            raise ManifestError(
+                f"bottle '{bottle}': credential cycle: {cycle}"
+            )
+        if node in visited:
+            return
+        visiting.add(node)
+        path.append(node)
+        for dep in graph.get(node, frozenset()):
+            dfs(dep, path)
+        path.pop()
+        visiting.discard(node)
+        visited.add(node)
+
+    for node in list(graph):
+        if node not in visited:
+            dfs(node, [])
+
+
+def _check_file_settings(ctx: str, kind: str, settings: Mapping[str, object]) -> None:
+    if kind == KIND_TOKEN:
+        path = settings.get("path")
+        if not isinstance(path, str) or not path:
+            raise ManifestError(
+                f"{ctx}: source 'file' with kind 'token' requires 'path: /path/to/file'"
+            )
+    elif kind == "ssh-key":
+        for field in ("private_key_path", "public_key_path"):
+            val = settings.get(field)
+            if not isinstance(val, str) or not val:
+                raise ManifestError(
+                    f"{ctx}: source 'file' with kind 'ssh-key' requires "
+                    f"'{field}: /path/to/file' (a non-empty string)"
+                )
 
 
 def _check_secret_settings(ctx: str, kind: str, settings: Mapping[str, object]) -> None:
@@ -303,8 +365,8 @@ def _check_secret_settings(ctx: str, kind: str, settings: Mapping[str, object]) 
 __all__ = [
     "ManifestCredential",
     "check_cred_refs",
+    "cred_label",
     "is_cred_ref",
     "parse_cred_label",
     "parse_credentials_block",
-    "unescape_dollar",
 ]
