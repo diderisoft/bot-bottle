@@ -180,6 +180,8 @@ def main() -> int:
         bottles.adopt()
     # Keeps running bottles' forwarded host logins current.
     bottles.credentials.start()
+    # Keeps `credentials:` block minted values current (renewal + retirement).
+    bottles.cred_renewer.start()
     # And the GitHub token git-gate pushes their HTTPS repos with (ADR 0014).
     GitTokenRenewer(bottles).start()
     # Measures bot-bottle's storage for the budget, off any launch's path.

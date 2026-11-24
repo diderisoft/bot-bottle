@@ -37,7 +37,9 @@ from ...lib.config_store import ConfigStore, HostBudget
 from . import bottle_metrics, budget, library_link, relabel
 from .build import RESTART_NEEDED
 from .audit_events import HostAudit, digest_content, digest_request, manifest_content
+from .cred_mint import CredEntry, audit_cred_entries, mint_cred_block, recredential, recredential_block
 from .credential_refresh import CredentialRefresher
+from .credential_renewer import CredentialRenewer
 from .sessions import ExitStatus, SessionManager, SessionRecord
 from .transcripts import TranscriptFollower, close_stale
 from .transcript_serve import masking_plan as masking
@@ -226,6 +228,8 @@ class BottleService:
         self._followers: dict[str, TranscriptFollower] = {}
         # Keeps forwarded host logins current; started by the daemon.
         self.credentials = CredentialRefresher(_push_credential, audit=self.audit)
+        # Keeps `credentials:` block minted values current; started by the daemon.
+        self.cred_renewer = CredentialRenewer(_push_credential, audit=self.audit)
         self._lock = threading.Lock()
         sessions.register(SESSION_KIND, self._finish)
 
@@ -309,13 +313,14 @@ class BottleService:
             if self._running(identity):
                 log.die(f"bottle {identity} is already running")
             self._admit(identity, request.label or identity, memory_bytes(plan.manifest.bottle))
+            plan, cred_entries = mint_cred_block(plan, identity, secrets)
             ready: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1)
             threading.Thread(
                 target=contextvars.Context().run,
                 args=(self._hold, backend, plan, request),
                 kwargs={"identity": identity, "stage_dir": stage_dir, "versions": versions,
                         "job_sink": log.current_sink(), "ready": ready,
-                        "from_console": from_console},
+                        "from_console": from_console, "cred_entries": cred_entries},
                 daemon=True, name=f"hostctl-bottle-{identity}",
             ).start()
             handed_off = True
@@ -402,7 +407,8 @@ class BottleService:
               request: LaunchRequest, *, identity: str, stage_dir: Path,
               versions: dict[str, object],
               job_sink: Callable[[str], None], ready: "queue.Queue[tuple[str, Any]]",
-              from_console: bool = False) -> None:
+              from_console: bool = False,
+              cred_entries: "list[CredEntry] | None" = None) -> None:
         """The holder thread: launch, run the agent, wait, tear down."""
         is_ready = threading.Event()
         held = _Held(identity, backend.name)
@@ -447,6 +453,10 @@ class BottleService:
                             identity, record.credentials, registry_id=bottle.registry_id,
                             bottle=bottle, env_var_secret=bottle.env_var_secret,
                             current=plan.agent_provision.provisioned_env)
+                    if cred_entries:
+                        self.cred_renewer.add(
+                            identity, bottle.registry_id, bottle.env_var_secret, cred_entries)
+                        audit_cred_entries(cred_entries, self.audit, identity, activation)
                     self._sessions.start(SessionRecord(
                         id=identity, kind=SESSION_KIND,
                         meta={"backend": backend.name, "agent": request.agent,
@@ -472,6 +482,7 @@ class BottleService:
                     is_ready.set()
                     held.exited.wait()
                     self.credentials.remove(identity)
+                    self.cred_renewer.retire(identity)
                     code = exit_code(held.exit_status.status, held.exit_status.signal) \
                         if held.exit_status else 0
                     self.audit.bottled_agent_exit(
@@ -515,7 +526,9 @@ class BottleService:
                 with self._lock:
                     self._adopted[record.id] = release
             self._refollow(backend, record)
-            self._recredential(backend, record)
+            recredential(record, backend, self.credentials)
+            recredential_block(record, backend, self.cred_renewer, _push_credential,
+                               self._secrets_file)
         close_stale({r.id for r in self._sessions.records()}, self.audit)
 
     # --- transcripts ---
@@ -567,20 +580,6 @@ class BottleService:
         backend = self._backend_for(with_recorded_infra(Settings(), name, self._recorded_infra))
         return grant_repo(backend, identity, grant,
                           secrets_file=self._secrets_file or host_secrets_path())
-
-    def _recredential(self, backend: "BottleBackend[Any, Any]", record: SessionRecord) -> None:
-        """Keep a re-adopted bottle's forwarded host login current."""
-        adopted = adoption.read(record.id)
-        if adopted is None or adopted.credentials is None:
-            return
-        try:
-            bottle = backend.attach_adopted(record.id, adopted)
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            log.warn(f"bottle {record.id}: can't refresh its host login: {e}")
-            return
-        if bottle is not None:
-            self.credentials.add(record.id, adopted.credentials,
-                                 registry_id=adopted.registry_id, bottle=bottle)
 
     def _refollow(self, backend: "BottleBackend[Any, Any]", record: SessionRecord) -> None:
         """Resume a re-adopted session's transcript copy from its offsets."""
@@ -670,6 +669,7 @@ class BottleService:
         from ...secret_source import FileSecrets
 
         self.credentials.remove(record.id)
+        self.cred_renewer.retire(record.id)
         name = str(record.meta.get("backend", ""))
         adopted = adoption.read(record.id)
         if adopted is None or not name:
