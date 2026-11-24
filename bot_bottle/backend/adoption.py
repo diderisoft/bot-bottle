@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from .. import bottle_state
+from ..credentials import KIND_SSH_KEY
 from ..git_gate.provision import DeployKeyRef, deploy_key_refs
 
 if TYPE_CHECKING:
@@ -54,6 +55,10 @@ class AdoptedCredEntry:
     settings: dict[str, Any]  # JSON-serializable source-specific settings
     # Maps kind field name ("token") to the EGRESS_TOKEN_N slots that carry it.
     slots: dict[str, list[str]] = field(default_factory=dict)
+    # For ssh-key credentials: the git-gate repo names whose key files this
+    # credential backs.  Used by recredential_block to re-write key files after
+    # a daemon restart (the key files in stage_dir are gone).
+    git_entry_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -103,18 +108,38 @@ def cred_block_for(plan: "BottlePlan") -> AdoptedCredBlock | None:
         return None
     entries: list[AdoptedCredEntry] = []
     for label, cred in credentials.items():
-        if cred.source == "secret":
-            continue
-        token_ref = cred_token_ref(label, cred)
-        matching = [slot for slot, ref in plan.egress_plan.token_env_map.items()
-                    if ref == token_ref]
-        if not matching:
-            continue
-        entries.append(AdoptedCredEntry(
-            label=label, source=cred.source, kind=cred.kind,
-            settings=dict(cred.settings),
-            slots={"token": matching} if cred.kind == "token" else {},
-        ))
+        if cred.kind == KIND_SSH_KEY:
+            # ssh-key credentials have no egress slots; persist them so
+            # recredential_block can re-write key files after a daemon restart.
+            # secret token/aws don't need adoption (EgressTokenSecrets handles them),
+            # but secret ssh-key does — there is no egress path for key files.
+            git_names = tuple(
+                e.Name for e in getattr(plan.manifest.bottle, "git", ())
+                if e.CredLabel == label
+            )
+            if not git_names:
+                continue
+            entries.append(AdoptedCredEntry(
+                label=label, source=cred.source, kind=cred.kind,
+                settings=dict(cred.settings),
+                slots={},
+                git_entry_names=git_names,
+            ))
+        else:
+            # token/aws: skip secret sources (EgressTokenSecrets handles them);
+            # adopt others if they have egress slots to re-inject on restart.
+            if cred.source == "secret":
+                continue
+            token_ref = cred_token_ref(label, cred)
+            matching = [slot for slot, ref in plan.egress_plan.token_env_map.items()
+                        if ref == token_ref]
+            if not matching:
+                continue
+            entries.append(AdoptedCredEntry(
+                label=label, source=cred.source, kind=cred.kind,
+                settings=dict(cred.settings),
+                slots={"token": matching} if cred.kind == "token" else {},
+            ))
     return AdoptedCredBlock(tuple(entries)) if entries else None
 
 
@@ -176,6 +201,7 @@ def _cred_block(raw: Any) -> AdoptedCredBlock | None:
                 label=str(e["label"]), source=str(e["source"]), kind=str(e["kind"]),
                 settings=dict(e.get("settings") or {}),
                 slots={str(k): list(v) for k, v in (e.get("slots") or {}).items()},
+                git_entry_names=tuple(str(n) for n in (e.get("git_entry_names") or [])),
             ))
         except (KeyError, TypeError):
             continue

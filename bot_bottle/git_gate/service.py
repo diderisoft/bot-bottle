@@ -145,10 +145,13 @@ class GitGate:
     def provision_dynamic_keys(
         self, bottle: ManifestBottle, plan: GitGatePlan, stage_dir: Path,
         secrets: SecretSource,
+        minted_ssh_keys: "dict[str, dict[str, str]] | None" = None,
     ) -> GitGatePlan:
         """Mint the forge deploy keys (forge tokens from `secrets`) and return
-        the plan with their identity files."""
-        return _provision.provision_git_gate_dynamic_keys(bottle, plan, stage_dir, secrets)
+        the plan with their identity files. `minted_ssh_keys` carries values for
+        `credentials:` ssh-key entries referenced via `key: $label`."""
+        return _provision.provision_git_gate_dynamic_keys(
+            bottle, plan, stage_dir, secrets, minted_ssh_keys=minted_ssh_keys)
 
     def revoke_provisioned_keys(
         self, bottle: ManifestBottle, identity: str, stage_dir: Path,

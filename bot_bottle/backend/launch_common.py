@@ -76,7 +76,7 @@ def provision_git_gate_keys(plan: BottlePlan) -> GitGatePlan:
         return plan.git_gate_plan
     return GitGate().provision_dynamic_keys(
         plan.manifest.bottle, plan.git_gate_plan, git_gate_state_dir(plan.slug),
-        plan.secrets,
+        plan.secrets, minted_ssh_keys=plan.minted_ssh_keys,
     )
 
 

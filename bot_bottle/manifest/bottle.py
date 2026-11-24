@@ -261,10 +261,10 @@ class ManifestBottle:
             r.CredLabel for r in egress.routes if r.CredLabel
         )
 
-        # git-gate $label (ssh-key credentials) is deferred to chunk 3.
+        git_key_cred_labels = frozenset(e.CredLabel for e in git if e.CredLabel)
         check_cred_refs(
             name, credentials, env_cred_vars,
-            route_cred_labels, frozenset(),
+            route_cred_labels, git_key_cred_labels,
         )
 
         return cls(
