@@ -207,6 +207,23 @@ class OrchestratorClient:
                 f"update_agent_secret {bottle_id}: HTTP {status}", status=status)
         return True
 
+    def push_readable_credential(
+        self, bottle_id: str, label: str, values: dict[str, str],
+    ) -> bool:
+        """Store an `agent_can_read` credential's values in the orchestrator
+        (`PUT /bottles/<id>/readable-credential/<label>`). False if unknown."""
+        import urllib.parse  # pylint: disable=import-outside-toplevel  # already in stdlib
+        encoded = urllib.parse.quote(label, safe="")
+        status, _ = self._request(
+            "PUT", f"/bottles/{bottle_id}/readable-credential/{encoded}", {"values": values},
+        )
+        if status == 404:
+            return False
+        if not 200 <= status < 300:
+            raise OrchestratorClientError(
+                f"push_readable_credential {bottle_id}/{label}: HTTP {status}", status=status)
+        return True
+
     def teardown_bottle(self, bottle_id: str) -> bool:
         """`DELETE /bottles/<id>`. False if unknown; idempotent."""
         status, _ = self._request("DELETE", f"/bottles/{bottle_id}")

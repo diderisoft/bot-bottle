@@ -67,6 +67,10 @@ class OrchestratorCore:  # pylint: disable=too-many-public-methods
         # Per-bottle egress tokens (env name -> value), in memory only;
         # encrypted copies live in the DB for restart recovery.
         self._tokens: dict[str, dict[str, str]] = {}
+        # Readable credential values for `agent_can_read` credentials:
+        # {bottle_id: {label: {field: value}}}. In memory only; re-pushed at
+        # adopt time from the host controller.
+        self._readable_creds: dict[str, dict[str, dict[str, str]]] = {}
         # Held across a decision's check, audit record and apply, so two
         # answers to one proposal can't both apply: the first stands.
         self.respond_lock = threading.RLock()
@@ -98,6 +102,7 @@ class OrchestratorCore:  # pylint: disable=too-many-public-methods
             return False
         self.registry.deregister(bottle_id)
         self._tokens.pop(bottle_id, None)
+        self._readable_creds.pop(bottle_id, None)
         self._supervisor.delete_proposals(bottle_id)
         self._supervisor.delete_canary_events(bottle_id)
         return True
@@ -123,6 +128,7 @@ class OrchestratorCore:  # pylint: disable=too-many-public-methods
         reaped = self.registry.reap_absent(live, grace_seconds=grace_seconds)
         for rec in reaped:
             self._tokens.pop(rec.bottle_id, None)
+            self._readable_creds.pop(rec.bottle_id, None)
             self._supervisor.delete_proposals(rec.bottle_id)
             self._supervisor.delete_canary_events(rec.bottle_id)
         return [rec.bottle_id for rec in reaped]
@@ -402,6 +408,38 @@ class OrchestratorCore:  # pylint: disable=too-many-public-methods
         self.registry.store_agent_secret(
             bottle_id, name, encrypt_value(env_var_secret, value))
         return True
+
+    # --- readable credentials (agent_can_read) ---
+
+    def store_readable_credential(
+        self, bottle_id: str, label: str, values: dict[str, str],
+    ) -> bool:
+        """Store a readable credential's current values for `bottle_id`.
+        False if the bottle is unknown."""
+        if self.registry.get(bottle_id) is None:
+            return False
+        self._readable_creds.setdefault(bottle_id, {})[label] = dict(values)
+        return True
+
+    def fetch_readable_credential(
+        self, bottle_id: str, label: str,
+    ) -> dict[str, str] | None:
+        """The current values of a readable credential, or None if absent."""
+        return self._readable_creds.get(bottle_id, {}).get(label)
+
+    def retire_readable_credentials(self, bottle_id: str) -> None:
+        """Remove all readable credentials for a torn-down bottle."""
+        self._readable_creds.pop(bottle_id, None)
+
+    def fetch_readable_credential_attributed(
+        self, source_ip: str, identity_token: str, label: str,
+    ) -> dict[str, str] | None:
+        """Resolve the caller's bottle by (source_ip, identity_token) and return
+        the credential values for `label`, or None if unattributed or absent."""
+        rec = self.registry.attribute(source_ip, identity_token)
+        if rec is None:
+            return None
+        return self.fetch_readable_credential(rec.bottle_id, label)
 
     # --- gateway ---
 

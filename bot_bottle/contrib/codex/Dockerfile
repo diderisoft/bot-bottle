@@ -35,6 +35,11 @@ RUN apt-get -o Acquire::Check-Valid-Until=false update \
 
 RUN install -d -o node -g node -m 755 /home/node/.config /home/node/.config/git
 
+# bb-credential: agent CLI for fetching readable credentials from the gateway.
+COPY bot_bottle/agent_scripts/bb_credential.py /usr/local/bin/bb-credential
+RUN chmod +x /usr/local/bin/bb-credential \
+  && ln -s /usr/local/bin/bb-credential /usr/local/bin/docker-credential-bb
+
 USER node
 WORKDIR /home/node
 

@@ -38,17 +38,20 @@ BUILD_INPUTS: dict[str, tuple[str, ...]] = {
         "bot_bottle/contrib/claude/Dockerfile",
         "bot_bottle/contrib/claude/package.json",
         "bot_bottle/contrib/claude/package-lock.json",
+        "bot_bottle/agent_scripts/bb_credential.py",
     ),
     "bot-bottle-codex": (
         "image-build-args.json",
         "bot_bottle/contrib/codex/Dockerfile",
         "bot_bottle/contrib/codex/codex-package_SHA256SUMS",
+        "bot_bottle/agent_scripts/bb_credential.py",
     ),
     "bot-bottle-pi": (
         "image-build-args.json",
         "bot_bottle/contrib/pi/Dockerfile",
         "bot_bottle/contrib/pi/package.json",
         "bot_bottle/contrib/pi/package-lock.json",
+        "bot_bottle/agent_scripts/bb_credential.py",
     ),
 }
 

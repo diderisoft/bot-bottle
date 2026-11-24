@@ -37,7 +37,8 @@ from ...lib.config_store import ConfigStore, HostBudget
 from . import bottle_metrics, budget, library_link, relabel
 from .build import RESTART_NEEDED
 from .audit_events import HostAudit, digest_content, digest_request, manifest_content
-from .cred_mint import CredEntry, audit_cred_entries, mint_cred_block, recredential, recredential_block
+from .cred_mint import (CredEntry, mint_cred_block, push_readable_credential, recredential,
+                        recredential_block, start_cred_block)
 from .credential_refresh import CredentialRefresher
 from .credential_renewer import CredentialRenewer
 from .sessions import ExitStatus, SessionManager, SessionRecord
@@ -229,7 +230,8 @@ class BottleService:
         # Keeps forwarded host logins current; started by the daemon.
         self.credentials = CredentialRefresher(_push_credential, audit=self.audit)
         # Keeps `credentials:` block minted values current; started by the daemon.
-        self.cred_renewer = CredentialRenewer(_push_credential, audit=self.audit)
+        self.cred_renewer = CredentialRenewer(
+            _push_credential, audit=self.audit, readable_push=push_readable_credential)
         self._lock = threading.Lock()
         sessions.register(SESSION_KIND, self._finish)
 
@@ -453,10 +455,8 @@ class BottleService:
                             identity, record.credentials, registry_id=bottle.registry_id,
                             bottle=bottle, env_var_secret=bottle.env_var_secret,
                             current=plan.agent_provision.provisioned_env)
-                    if cred_entries:
-                        self.cred_renewer.add(
-                            identity, bottle.registry_id, bottle.env_var_secret, cred_entries)
-                        audit_cred_entries(cred_entries, self.audit, identity, activation)
+                    start_cred_block(self.cred_renewer, self.audit, cred_entries, plan,
+                                     identity=identity, bottle=bottle, activation=activation)
                     self._sessions.start(SessionRecord(
                         id=identity, kind=SESSION_KIND,
                         meta={"backend": backend.name, "agent": request.agent,

@@ -39,6 +39,11 @@ RUN install -d -o node -g node -m 755 /home/node/.config /home/node/.config/git 
   && chown root:root /tmp /var/tmp \
   && chmod 1777 /tmp /var/tmp
 
+# bb-credential: agent CLI for fetching readable credentials from the gateway.
+COPY bot_bottle/agent_scripts/bb_credential.py /usr/local/bin/bb-credential
+RUN chmod +x /usr/local/bin/bb-credential \
+  && ln -s /usr/local/bin/bb-credential /usr/local/bin/docker-credential-bb
+
 USER node
 WORKDIR /home/node
 

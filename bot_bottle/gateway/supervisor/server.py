@@ -45,6 +45,7 @@ from bot_bottle.gateway.supervisor.mcp_dispatch import (
 )
 from bot_bottle.contract import supervise as _sv
 from bot_bottle.gateway.supervisor.env_handler import handle_get_environment
+from bot_bottle.gateway.supervisor import credential_fetch
 from bot_bottle.gateway.supervisor import launch_bottle_server as _lb
 from bot_bottle.gateway.supervisor.forge_tools import FORGE_TOOL_DEFINITIONS
 
@@ -615,7 +616,26 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if self.path.startswith(credential_fetch.PATH_PREFIX):
+            self._handle_credential_fetch()
+            return
         self._write_text(405, "use POST for MCP requests\n")
+
+    def _handle_credential_fetch(self) -> None:
+        """Serve a readable credential to an attributed agent (see credential_fetch)."""
+        status, body = credential_fetch.fetch(
+            self.path, self.client_address[0], self._identity_token(),
+            os.environ.get(ORCHESTRATOR_URL_ENV, ""))
+        self._write_json(status, body)
+
+    def _write_json(self, status: int, body: object) -> None:
+        encoded = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(encoded)
 
     def do_POST(self) -> None:
         try:
