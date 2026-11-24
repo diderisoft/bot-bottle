@@ -1,8 +1,13 @@
+import json
 import os
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 from unittest.mock import Mock
 
+from scripts import tracker_policy
 from scripts.tracker_policy import (
     TRIAGE_LABEL,
     ensure_issue_label,
@@ -49,3 +54,34 @@ class TestEnsureIssueLabel(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMain(unittest.TestCase):
+    def setUp(self) -> None:
+        tmp = self.enterContext(tempfile.TemporaryDirectory())
+        self.event = Path(tmp) / "event.json"
+        self.event.write_text(json.dumps(
+            {"issue": {"number": 405, "labels": [], "pull_request": None}}), encoding="utf-8")
+        env = {
+            "GITHUB_API_URL": "https://api.example.test",
+            "GITHUB_REPOSITORY": "acme/app",
+            "GITHUB_TOKEN": "t",
+            "GITHUB_EVENT_PATH": str(self.event),
+        }
+        patcher = mock.patch.dict(os.environ, env, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_label_issue_labels_the_event_issue(self):
+        with mock.patch.object(tracker_policy, "GiteaApi") as api_cls, \
+                mock.patch.object(sys, "argv", ["tracker_policy.py", "label-issue"]), \
+                mock.patch("builtins.print") as printed:
+            api_cls.return_value.request.side_effect = [[{"id": 55, "name": TRIAGE_LABEL}], None]
+            self.assertEqual(tracker_policy.main(), 0)
+        api_cls.assert_called_once_with("https://api.example.test", "acme/app", "t")
+        printed.assert_called_once_with(f"Applied {TRIAGE_LABEL}.")
+
+    def test_check_pr_is_no_longer_a_command(self):
+        with mock.patch.object(sys, "argv", ["tracker_policy.py", "check-pr"]), \
+                mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+            tracker_policy.main()
