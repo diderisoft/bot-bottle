@@ -37,7 +37,12 @@ _SLUG = "demo-cred-mint-1"
 _FAKE_SOURCE = "host_login"
 
 
-def _index(bottle_extra: dict | None = None) -> ManifestIndex:
+def _no_file_secrets(_path: object) -> MappingSecrets:
+    """Stands in for FileSecrets: the host secrets file is empty."""
+    return MappingSecrets({})
+
+
+def _index(bottle_extra: dict[str, Any] | None = None) -> ManifestIndex:
     bottle_def: dict[str, object] = {}
     if bottle_extra:
         bottle_def.update(bottle_extra)
@@ -47,7 +52,7 @@ def _index(bottle_extra: dict | None = None) -> ManifestIndex:
     })
 
 
-def _stage_fields(stage: Path, bottle_extra: dict | None = None) -> dict[str, Any]:
+def _stage_fields(stage: Path, bottle_extra: dict[str, Any] | None = None) -> dict[str, Any]:
     idx = _index(bottle_extra)
     return {
         "spec": BottleSpec(manifest=idx, agent_name="demo", bottle_names=("dev",),
@@ -83,7 +88,7 @@ class _FakeMintProvider(CredentialProvider):
                  expires_at: datetime | None = None) -> None:
         self._token = token
         self._expires_at = expires_at
-        self.mint_calls: list[tuple] = []
+        self.mint_calls: list[tuple[Any, ...]] = []
 
     def mint(self, label: str, bottle_id: str,
              settings: Mapping[str, object], secrets: object) -> MintedCredential:
@@ -126,8 +131,8 @@ class TestMintCredBlock(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.stage, ignore_errors=True)
         self.addCleanup(use_bottle_root(self.stage / "root"))
 
-    def _plan(self, bottle_extra: dict | None = None,
-              token_env_map: dict | None = None) -> FirecrackerBottlePlan:
+    def _plan(self, bottle_extra: dict[str, Any] | None = None,
+              token_env_map: dict[str, Any] | None = None) -> FirecrackerBottlePlan:
         fields = _stage_fields(self.stage, bottle_extra)
         plan = FirecrackerBottlePlan(**fields)
         if token_env_map is not None:
@@ -151,7 +156,7 @@ class TestMintCredBlock(unittest.TestCase):
             bottle_extra={"credentials": {"my-cred": {"source": "secret", "secret": "MY_SECRET"}}},
             token_env_map={"EGRESS_TOKEN_0": "MY_SECRET"},
         )
-        with mock.patch("bot_bottle.secret_source.FileSecrets", lambda _: MappingSecrets({})):
+        with mock.patch("bot_bottle.secret_source.FileSecrets", _no_file_secrets):
             updated, entries = mint_cred_block(plan, _SLUG, MappingSecrets({}), registry=reg)
         self.assertIs(updated, plan)
         self.assertEqual(entries, [])
@@ -165,7 +170,7 @@ class TestMintCredBlock(unittest.TestCase):
             bottle_extra={"credentials": {"mylogin": {"source": _FAKE_SOURCE}}},
             token_env_map={"EGRESS_TOKEN_0": "__cred__mylogin"},
         )
-        with mock.patch("bot_bottle.secret_source.FileSecrets", lambda _: MappingSecrets({})):
+        with mock.patch("bot_bottle.secret_source.FileSecrets", _no_file_secrets):
             updated, entries = mint_cred_block(plan, _SLUG, MappingSecrets({}), registry=reg)
         self.assertIsNot(updated, plan)
         self.assertEqual(updated.minted_cred_values.get("__cred__mylogin"), "live-token")
@@ -184,7 +189,7 @@ class TestMintCredBlock(unittest.TestCase):
         plan = self._plan(
             bottle_extra={"credentials": {"bad": {"source": _FAKE_SOURCE}}},
         )
-        with mock.patch("bot_bottle.secret_source.FileSecrets", lambda _: MappingSecrets({})):
+        with mock.patch("bot_bottle.secret_source.FileSecrets", _no_file_secrets):
             with self.assertRaises(ValueError):
                 mint_cred_block(plan, _SLUG, MappingSecrets({}), registry=reg)
 
@@ -196,7 +201,7 @@ class TestMintCredBlock(unittest.TestCase):
             bottle_extra={"credentials": {"tok": {"source": _FAKE_SOURCE}}},
             token_env_map={"EGRESS_TOKEN_0": "__cred__tok"},
         )
-        with mock.patch("bot_bottle.secret_source.FileSecrets", lambda _: MappingSecrets({})):
+        with mock.patch("bot_bottle.secret_source.FileSecrets", _no_file_secrets):
             updated, _ = mint_cred_block(plan, _SLUG, MappingSecrets({}), registry=reg)
         self.assertEqual(updated.egress_secrets.get("__cred__tok"), "injected")
 
@@ -212,7 +217,7 @@ class TestMintCredBlock(unittest.TestCase):
                 "EGRESS_TOKEN_2": "OTHER",
             },
         )
-        with mock.patch("bot_bottle.secret_source.FileSecrets", lambda _: MappingSecrets({})):
+        with mock.patch("bot_bottle.secret_source.FileSecrets", _no_file_secrets):
             _, entries = mint_cred_block(plan, _SLUG, MappingSecrets({}), registry=reg)
         slots = entries[0][5]
         self.assertIn("EGRESS_TOKEN_0", slots["token"])
@@ -227,8 +232,8 @@ class TestMintCredBlock(unittest.TestCase):
             bottle_extra={"credentials": {"env-cred": {"source": _FAKE_SOURCE}}},
             token_env_map={},  # no egress slots
         )
-        with mock.patch("bot_bottle.secret_source.FileSecrets", lambda _: MappingSecrets({})):
-            updated, entries = mint_cred_block(plan, _SLUG, MappingSecrets({}), registry=reg)
+        with mock.patch("bot_bottle.secret_source.FileSecrets", _no_file_secrets):
+            _, entries = mint_cred_block(plan, _SLUG, MappingSecrets({}), registry=reg)
         # Minted, but no slots and no value in token_env_map.
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0][5], {})  # empty slots
@@ -244,8 +249,8 @@ class TestCredBlockFor(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.stage, ignore_errors=True)
         self.addCleanup(use_bottle_root(self.stage / "root"))
 
-    def _plan(self, bottle_extra: dict | None = None,
-              token_env_map: dict | None = None) -> FirecrackerBottlePlan:
+    def _plan(self, bottle_extra: dict[str, Any] | None = None,
+              token_env_map: dict[str, Any] | None = None) -> FirecrackerBottlePlan:
         fields = _stage_fields(self.stage, bottle_extra)
         plan = FirecrackerBottlePlan(**fields)
         if token_env_map is not None:

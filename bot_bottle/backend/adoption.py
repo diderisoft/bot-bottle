@@ -51,7 +51,7 @@ class AdoptedCredEntry:
     label: str
     source: str
     kind: str
-    settings: dict  # JSON-serializable source-specific settings
+    settings: dict[str, Any]  # JSON-serializable source-specific settings
     # Maps kind field name ("token") to the EGRESS_TOKEN_N slots that carry it.
     slots: dict[str, list[str]] = field(default_factory=dict)
 

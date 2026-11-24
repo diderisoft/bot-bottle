@@ -23,7 +23,6 @@ from ...secret_source import SecretSource
 
 if TYPE_CHECKING:
     from ...backend.plan import BottlePlan
-    from ...manifest.credentials import ManifestCredential
 
 # (label, minted, provider, settings, renewal_secrets, slots)
 # `slots` maps each kind field (usually "token") to the EGRESS_TOKEN_N names
