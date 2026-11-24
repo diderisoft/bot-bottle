@@ -494,5 +494,54 @@ class TestReadablePush(unittest.TestCase):
         self.assertEqual(readable_calls, [])
 
 
+class TestStatusFor(unittest.TestCase):
+    def test_empty_for_unknown_bottle(self) -> None:
+        renewer, _ = _make_renewer()
+        self.assertEqual([], renewer.status_for("no-such-bottle"))
+
+    def test_returns_metadata_no_values(self) -> None:
+        from bot_bottle.credentials import KIND_AWS, MintedCredential as MC
+        minted = MC(KIND_AWS, {"access_key_id": "AKIA…", "secret_access_key": "SECRET"},
+                    EXPIRES_1H, "arn:aws:iam::123:role/r")
+        renewer, _ = _make_renewer()
+        renewer.add("b1", "reg1", "evsec",
+                    [("aws-cred", minted, _FakeProvider(), {}, None, {})],  # type: ignore[arg-type]
+                    readable_labels=frozenset())
+        result = renewer.status_for("b1")
+        self.assertEqual(1, len(result))
+        item = result[0]
+        self.assertEqual("aws-cred", item["label"])
+        self.assertEqual(KIND_AWS, item["kind"])
+        self.assertEqual("arn:aws:iam::123:role/r", item["principal"])
+        self.assertEqual(EXPIRES_1H.isoformat(), item["expires_at"])
+        self.assertFalse(item["agent_can_read"])
+        # Values must not be present.
+        self.assertNotIn("access_key_id", item)
+        self.assertNotIn("secret_access_key", item)
+
+    def test_agent_can_read_flag(self) -> None:
+        minted = _minted(expires_at=None)
+        renewer, _ = _make_renewer()
+        renewer.add("b2", "reg2", "evsec",
+                    [("tok", minted, _FakeProvider(), {}, None, {})],  # type: ignore[arg-type]
+                    readable_labels=frozenset({"tok"}))
+        result = renewer.status_for("b2")
+        self.assertTrue(result[0]["agent_can_read"])
+        self.assertIsNone(result[0]["expires_at"])
+
+    def test_multiple_credentials(self) -> None:
+        from bot_bottle.credentials import KIND_AWS, MintedCredential as MC
+        c1 = _minted("tok-a")
+        c2 = MC(KIND_AWS, {"access_key_id": "X", "secret_access_key": "Y"}, None, "role-b")
+        renewer, _ = _make_renewer()
+        renewer.add("b3", "reg3", "evsec",
+                    [("alpha", c1, _FakeProvider(), {}, None, {}),   # type: ignore[arg-type]
+                     ("beta", c2, _FakeProvider(), {}, None, {})],   # type: ignore[arg-type]
+                    readable_labels=frozenset())
+        result = renewer.status_for("b3")
+        labels = {r["label"] for r in result}
+        self.assertEqual({"alpha", "beta"}, labels)
+
+
 if __name__ == "__main__":
     unittest.main()

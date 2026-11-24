@@ -166,6 +166,23 @@ class CredentialRenewer:
     def stop(self) -> None:
         self._stop.set()
 
+    def status_for(self, bottle_id: str) -> list[dict[str, object]]:
+        """Credential metadata for `bottle_id`'s tracked credentials (no values)."""
+        with self._lock:
+            entry = self._bottles.get(bottle_id)
+        if entry is None:
+            return []
+        out = []
+        for ce in entry.creds.values():
+            out.append({
+                "label": ce.label,
+                "kind": ce.cred.kind,
+                "principal": ce.cred.principal,
+                "expires_at": ce.cred.expires_at.isoformat() if ce.cred.expires_at else None,
+                "agent_can_read": ce.label in entry.readable_labels,
+            })
+        return out
+
     def renew_all(self) -> None:
         """Check and renew all near-expiry credentials across all bottles."""
         with self._lock:

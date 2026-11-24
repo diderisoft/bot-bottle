@@ -31,6 +31,20 @@ async def refresh_credentials(msg: Mapping[str, Any], running: Mapping[str, str]
             "agent_id": agent_id, **result}
 
 
+async def credential_status(msg: Mapping[str, Any], running: Mapping[str, str],
+                            bottles: Any) -> dict[str, Any]:
+    """Metadata of a running bottle's `credentials:` block credentials (no values)."""
+    agent_id = str(msg.get("agent_id", ""))
+    bottle = running.get(agent_id)
+    status = getattr(bottles, "credential_status", None)
+    result: dict[str, object] = (
+        {"error": "that agent isn't running on this host"} if not bottle
+        else {"error": "this host controller doesn't support credential status"} if status is None
+        else {"credentials": status(bottle)})
+    return {"type": "credentials_status", "request_id": msg.get("request_id"),
+            "agent_id": agent_id, **result}
+
+
 async def workspace_file(msg: Mapping[str, Any], running: Mapping[str, str],
                          bottles: Any) -> dict[str, Any]:
     """An image file from a running agent's bottle, for the console to show
@@ -813,7 +827,8 @@ async def resolve(msg: Mapping[str, Any], _running: Mapping[str, str],
 
 
 # Console requests (most about one running agent), by message type.
-QUERIES = {"refresh_credentials": refresh_credentials, "manifest": manifest,
+QUERIES = {"refresh_credentials": refresh_credentials, "credential_status": credential_status,
+           "manifest": manifest,
            "bottle_chain": bottle_chain, "bottle_write": bottle_write,
            "manifest_save": manifest_save, "manifest_transfer": manifest_transfer,
            "library": library, "resolve": resolve,
@@ -835,6 +850,7 @@ BESIDE = frozenset(FORGE_REQUESTS)
 
 __all__ = ["ANSWERS", "HOST_REQUESTS", "QUERIES", "add_repo_answer", "bottle_chain",
            "create_repo_answer",
+           "credential_status",
            "egress_allow",
            "bottle_write", "card", "card_changed", "forge_attention", "forge_connect",
            "forge_connect_answer", "github_authorize_start", "github_status", "library",

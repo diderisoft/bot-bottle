@@ -561,6 +561,10 @@ class BottleService:
         """Refresh a running bottle's forwarded host login now."""
         return self.credentials.refresh_now(identity)
 
+    def credential_status(self, identity: str) -> list[dict[str, object]]:
+        """Metadata of a running bottle's `credentials:` block credentials (no values)."""
+        return self.cred_renewer.status_for(identity)
+
     def backend_for_session(self, identity: str) -> "BottleBackend[Any, Any] | None":
         """The backend a running bottle is on, or None if it isn't known."""
         record = self._sessions.record(identity)
