@@ -299,8 +299,8 @@ def resolve_env(
             forwarded[name] = _from_host_env(name, raw, env, store)
         elif kind == STORED:
             forwarded[name] = _from_store(name, env_entry_stored_name(raw), store, answers)
-        else:  # literal
-            literals[name] = raw
+        else:  # literal; `@@x` is a literal `@x`
+            literals[name] = secret_ref.literal(raw)
     return ResolvedEnv(forwarded=forwarded, literals=literals)
 
 

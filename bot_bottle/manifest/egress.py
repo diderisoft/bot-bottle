@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from collections.abc import Mapping
 from typing import Any, cast
 
-from .. import secret_ref
+from .. import sigil_ref as secret_ref
 from .credentials import is_cred_ref, parse_cred_label
 from .util import ManifestError, OldFormError, as_json_object
 
@@ -85,11 +85,11 @@ class ManifestEgressRoute:
     AuthHeader: str = ""
     # The secret whose value is sent: `auth.value: secret:NAME` gives NAME
     # (from the store); `secret:${VAR}` gives VAR, with TokenFromEnv (from the
-    # launching environment); `$label` gives the credential label (CredLabel),
+    # launching environment); `@label` gives the credential label (CredLabel),
     # resolved to a TokenRef at launch by the host controller.
     TokenRef: str = ""
     TokenFromEnv: bool = False
-    # Set when auth.value is `$label`; the host controller resolves it to a
+    # Set when auth.value is `@label`; the host controller resolves it to a
     # TokenRef at launch. Mutually exclusive with TokenRef and TokenFromEnv.
     CredLabel: str = ""
     Role: tuple[str, ...] = ()
@@ -330,7 +330,7 @@ def _parse_auth(label: str, bottle: str, host: str,
       { type: bearer, value: secret:NAME }            Authorization: Bearer <v>
       { type: token,  value: secret:NAME }            Authorization: token <v>
       { type: header, name: X-Api-Key, value: ... }   X-Api-Key: <v> (raw)
-      { type: bearer, value: $label }                 cred label resolved at launch
+      { type: bearer, value: @label }                 cred label resolved at launch
     """
     auth = as_json_object(raw, f"{label} auth")
     if not auth:
@@ -368,13 +368,13 @@ def _auth_token(label: str, auth: dict[str, object]) -> tuple[str, bool, str]:
     """An auth block's secret as (token_ref, from_env, cred_label):
     - `secret:NAME`   → (NAME, False, "")  — from the store
     - `secret:${VAR}` → (VAR,  True,  "")  — from the launching env
-    - `$label`        → ("",   False, label) — credential resolved at launch
+    - `@label`        → ("",   False, label) — credential resolved at launch
     Not accepted: `secret:?`, `?`, plain `${VAR}`, bare literals."""
     value = auth.get("value")
     if not isinstance(value, str) or not value:
         raise ManifestError(
             f"{label} auth.value is required when 'auth' is set "
-            f"(value: secret:NAME, or $label for a credential)")
+            f"(value: secret:NAME, or @label for a credential)")
     if is_cred_ref(value):
         return "", False, parse_cred_label(value)
     ref = secret_ref.parse(value)
@@ -384,7 +384,7 @@ def _auth_token(label: str, auth: dict[str, object]) -> tuple[str, bool, str]:
         why = (" (a route's secret is resolved where no one may be there to type it, so "
                "secret:? isn't taken here)" if ref.secret else "")
         raise ManifestError(f"{label} auth.value takes secret:NAME, secret:${{VAR}}, or "
-                            f"$label (credential) (was {_shown(value)}){why}")
+                            f"@label (credential) (was {_shown(value)}){why}")
     problem = secret_ref.problem(value)
     if problem:
         raise ManifestError(f"{label} auth.value {problem}")

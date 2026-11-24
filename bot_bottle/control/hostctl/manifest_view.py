@@ -3,7 +3,7 @@ each bottle file in its chain as they are now, and what the bottle resolves to
 (egress, repos including any granted while it runs, forges, env names).
 
 Env values are never included, only names. The files are the operator's own
-and carry secrets by reference (`$label`, `secret: NAME`), not by value.
+and carry secrets by reference (`@label`, `secret: NAME`), not by value.
 """
 
 from __future__ import annotations

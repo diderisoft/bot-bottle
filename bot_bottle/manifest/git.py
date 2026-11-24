@@ -122,7 +122,7 @@ class ManifestGitEntry:
     UpstreamHost: str = ""
     UpstreamPort: str = ""
     UpstreamPath: str = ""
-    # Set when `key: $label` names a `credentials:` entry instead of a key
+    # Set when `key: @label` names a `credentials:` entry instead of a key
     # block; the host controller writes the minted ssh-key credential to a file
     # at launch and sets `identity_file` on the upstream.
     CredLabel: str = ""
@@ -132,7 +132,7 @@ class ManifestGitEntry:
         cls, bottle_name: str, repo_name: str, raw: object
     ) -> "ManifestGitEntry":
         """Parse `git_gate.repos.<repo_name>`: `url` and `key` required,
-        `host_key` optional. `key` may be `$label` to use a `credentials:` entry."""
+        `host_key` optional. `key` may be `@label` to use a `credentials:` entry."""
         if not repo_name:
             raise ManifestError(
                 f"bottle '{bottle_name}' git_gate.repos has an empty key"
@@ -174,7 +174,7 @@ class ManifestGitEntry:
             if not is_cred_ref(key_raw):
                 raise ManifestError(
                     f"bottle '{bottle_name}' {label}.key: a string key must be a "
-                    f"credential reference like '$my-cred' (was {key_raw!r})"
+                    f"credential reference like '@my-cred' (was {key_raw!r})"
                 )
             cred_label = parse_cred_label(key_raw)
             return cls(

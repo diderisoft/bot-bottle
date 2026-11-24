@@ -19,6 +19,7 @@ from ...credentials import (
 )
 from ...egress.service import cred_token_ref
 from ...lib import log
+from ... import sigil_ref
 from ...manifest.credentials import is_cred_ref, parse_cred_label
 from ...paths import host_secrets_path
 from ...secret_source import SecretSource
@@ -51,13 +52,13 @@ def mint_cred_block(
 
     - `source: secret` token and aws credentials are skipped: they already
       resolve from the host secrets store via `EgressTokenSecrets._route_refs`.
-      Their values are still collected for `$label` references.
+      Their values are still collected for `@label` references.
     - `source: secret, kind: ssh-key` has no such path (git-gate reads the key
       from a file), so it is minted here like every other source.
     - Token values go into `plan.minted_cred_values` so `egress_secrets` can
       find them when `launch()` calls `registration_tokens()`; ssh-key values
       go into `plan.minted_ssh_keys` for git-gate to write as key files.
-    - Settings values of the form `$label` are resolved to the value of the
+    - Settings values of the form `@label` are resolved to the value of the
       credential named `label`, which must come earlier in the block
       (declaration order; unknown labels and cycles fail at manifest load).
     - `agent_can_read` credentials' values go into `plan.readable_cred_values`
@@ -76,7 +77,7 @@ def mint_cred_block(
     from ...secret_source import FileSecrets  # pylint: disable=import-outside-toplevel
     renewal_secrets = FileSecrets(host_secrets_path())
 
-    # label -> token value, and label -> every field, for `$label` resolution.
+    # label -> token value, and label -> every field, for `@label` resolution.
     resolved_tokens: dict[str, str] = {}
     resolved_all_fields: dict[str, dict[str, str]] = {}
 
@@ -158,9 +159,10 @@ def _resolve_settings(
     resolved_tokens: Mapping[str, str],
     resolved_all_fields: Mapping[str, Mapping[str, str]],
 ) -> dict[str, object]:
-    """`settings` with each `$label` value replaced by that credential's value:
+    """`settings` with each `@label` value replaced by that credential's value:
     its `token` field, or else its first field. An unknown label passes through
-    unchanged (manifest validation has already refused it)."""
+    unchanged (manifest validation has already refused it); a leading `@@`
+    becomes `@`."""
     out: dict[str, object] = {}
     for key, value in settings.items():
         if isinstance(value, str) and is_cred_ref(value):
@@ -171,6 +173,8 @@ def _resolve_settings(
                 out[key] = next(iter(resolved_all_fields[ref].values()), "")
             else:
                 out[key] = value
+        elif isinstance(value, str):
+            out[key] = sigil_ref.literal(value)  # `@@x` is a literal `@x`
         else:
             out[key] = value
     return out

@@ -110,7 +110,7 @@ def egress_manifest_routes(
             # explicit would otherwise let an authed route write.
             core_matches.append(CoreMatchEntry(methods=READ_METHODS))
 
-        # Resolve a `$label` credential ref to the token_ref the egress plan uses.
+        # Resolve an `@label` credential ref to the token_ref the egress plan uses.
         # For `source: secret` / `kind: token` this is the existing secret name
         # (backward-compatible). For everything else it is `__cred__<label>`, a
         # synthetic name the host controller populates at mint time.
@@ -137,7 +137,7 @@ def egress_manifest_routes(
 
 
 def cred_token_ref(label: str, cred: "ManifestCredential | None") -> str:
-    """The `token_ref` name for a `$label` credential route.
+    """The `token_ref` name for an `@label` credential route.
 
     For `source: secret, kind: token` this is the existing secret name so the
     gateway behaviour is identical to `auth.value: secret:NAME`. For every

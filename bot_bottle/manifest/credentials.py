@@ -4,10 +4,11 @@ A credential is a label, a source, its settings, and a kind. The source names
 how it's made; the kind names what it is. When a source makes only one kind the
 kind is implied, so `kind:` is usually omitted.
 
-`$label` refs in `env:` and `auth.value` point here. This module also exposes
-`parse_cred_label` for callers that need to detect a `$label` reference, and
-`check_cred_refs` to validate them after both `credentials:` and `env:`/`egress`
-are parsed.
+`@label` refs in `env:`, `auth.value`, `git_gate.repos.<name>.key` and other
+credentials' settings point here. This module re-exports `is_cred_ref` and
+`cred_label` from `sigil_ref` for callers that need to detect an `@label`
+reference, and has `check_cred_refs` to validate them after both
+`credentials:` and `env:`/`egress` are parsed.
 """
 
 from __future__ import annotations
@@ -16,16 +17,12 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from .. import sigil_ref
 from ..credentials import (
     ENV_KINDS, KIND_TOKEN,
     KNOWN_KINDS, CredentialRegistry, default_registry,
 )
-from .util import ManifestError, as_json_object
-
-# `$label`: a bare `$` followed by a credential label (kebab-case, same
-# pattern as bottle names). `${VAR}` (braced) is a host-env ref and is
-# handled by `secret_ref`; `$$` is a literal `$` and is stripped by callers.
-_CRED_LABEL_RE = re.compile(r"^\$([a-z][a-z0-9-]*)$")
+from .util import ManifestError, as_json_object, as_value_dict
 
 # Source names whose `kind` is implied (they mint exactly one kind).
 _IMPLIED_KINDS: dict[str, str] = {
@@ -51,22 +48,11 @@ _SOURCE_SETTINGS: dict[str, frozenset[str]] = {
 }
 
 
-def parse_cred_label(value: str) -> str:
-    """The credential label if `value` is `$label`, else ''."""
-    m = _CRED_LABEL_RE.match(value)
-    return m.group(1) if m else ""
-
-
-def is_cred_ref(value: str) -> bool:
-    """True if `value` is a `$label` credential reference."""
-    return bool(_CRED_LABEL_RE.match(value))
-
-
-def unescape_dollar(value: str) -> str:
-    """Replace a leading `$$` with a literal `$`. Other `$$` are not special."""
-    if value.startswith("$$"):
-        return value[1:]
-    return value
+# Re-exported from `sigil_ref`, where `@label` is parsed with the other value
+# forms, for callers that import them from here.
+is_cred_ref = sigil_ref.is_cred_ref
+cred_label = sigil_ref.cred_label
+parse_cred_label = sigil_ref.cred_label
 
 
 @dataclass(frozen=True)
@@ -178,6 +164,10 @@ class ManifestCredential:
             _check_secret_settings(ctx, kind, settings)
         elif source == "file":
             _check_file_settings(ctx, kind, settings)
+        else:
+            # Any string setting of another source may be a value form
+            # (`@label`, `secret:NAME`, `${VAR}`, ...); refuse malformed ones.
+            settings = as_value_dict(settings, ctx)
 
         # Keep the resolved kind in the settings, so `provider.mint()` (at
         # launch and when a re-adopted bottle is re-minted) receives it even
@@ -227,15 +217,15 @@ def check_cred_refs(
     route_cred_labels: frozenset[str],
     git_key_cred_labels: frozenset[str],
 ) -> None:
-    """Cross-validate `$label` references after all blocks are parsed.
+    """Cross-validate `@label` references after all blocks are parsed.
 
-    - Every `$label` names an existing credential.
+    - Every `@label` names an existing credential.
     - Kind checks: `env` and bearer/token/header auth take `token` credentials;
       `aws-sigv4` auth takes `aws` credentials; git-gate keys take `ssh-key`.
-    - Unswappable placeholder: a `$label` in `env:` must have at least one
+    - Unswappable placeholder: an `@label` in `env:` must have at least one
       egress route or git-gate key that uses the same credential (otherwise
       the placeholder the agent holds has nowhere to be swapped).
-    - A credential's settings may use `$label` (a deploy key minted with an
+    - A credential's settings may use `@label` (a deploy key minted with an
       API token credential): each must name a declared credential, and the
       references must not form a cycle.
     """
@@ -284,14 +274,14 @@ def check_cred_refs(
                 f"its auth, or remove it from env"
             )
 
-    # $label refs in settings: each names a credential, and no cycles.
+    # @label refs in settings: each names a credential, and no cycles.
     dep_graph: dict[str, frozenset[str]] = {}
     for label, cred in credentials.items():
         deps = settings_cred_deps(cred.settings)
         for dep in sorted(deps):
             if dep not in credentials:
                 raise ManifestError(
-                    f"bottle '{bottle}' credentials.{label}: ${dep} names no "
+                    f"bottle '{bottle}' credentials.{label}: @{dep} names no "
                     f"declared credential"
                 )
         dep_graph[label] = deps
@@ -299,7 +289,7 @@ def check_cred_refs(
 
 
 def settings_cred_deps(settings: Mapping[str, object]) -> frozenset[str]:
-    """The credential labels a credential's settings reference with `$label`."""
+    """The credential labels a credential's settings reference with `@label`."""
     return frozenset(
         parse_cred_label(v) for v in settings.values()
         if isinstance(v, str) and is_cred_ref(v)
@@ -374,9 +364,9 @@ def _check_secret_settings(ctx: str, kind: str, settings: Mapping[str, object]) 
 __all__ = [
     "ManifestCredential",
     "check_cred_refs",
+    "cred_label",
     "is_cred_ref",
     "parse_cred_label",
     "parse_credentials_block",
     "settings_cred_deps",
-    "unescape_dollar",
 ]

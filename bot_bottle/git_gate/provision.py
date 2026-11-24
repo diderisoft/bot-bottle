@@ -223,7 +223,7 @@ def _resolve_identity_file(
     minted_ssh_keys: "dict[str, dict[str, str]] | None" = None,
 ) -> str:
     """The entry's SSH identity file, provisioning a deploy key first for
-    a forge kind, or writing a minted credential key for a `$label` entry."""
+    a forge kind, or writing a minted credential key for an `@label` entry."""
     keys = minted_ssh_keys or {}
     if entry.CredLabel and entry.CredLabel in keys:
         return _write_cred_key(entry, stage_dir, keys)

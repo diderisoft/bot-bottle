@@ -318,7 +318,7 @@ class _GiteaDeployKeyProvider(CredentialProvider):
 
     Mints a fresh keypair, registers the public half with the Gitea API, and
     revokes it at teardown. `token` must resolve to a Gitea personal access
-    token (use `$label` for a credential defined earlier in the same block).
+    token (use `@label` for a credential defined earlier in the same block).
 
     `project_definable`: a scoped key, revoked at teardown, is safer than a
     raw secret.
