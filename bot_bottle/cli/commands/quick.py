@@ -91,9 +91,17 @@ def _ensure_starters(manifest: ManifestIndex, cwd: Path) -> ManifestIndex:
 
 
 def project_bottle(cwd: Path) -> str:
-    """The project's own bottle, `./main`, if it has one."""
-    path = cwd / ".bot-bottle" / "bottles" / f"{PROJECT_BOTTLE}.md"
-    return bottle_ref(PROJECT_BOTTLE, True) if path.is_file() else ""
+    """The project's own bottle, if it has one.
+
+    Looks for `.bot-bottle/bottles/<dirname>.md` first (PRD 0094), then
+    falls back to `main.md` for projects created before this convention."""
+    name = cwd.name
+    if name:
+        path = cwd / ".bot-bottle" / "bottles" / f"{name}.md"
+        if path.is_file():
+            return bottle_ref(name, True)
+    old_path = cwd / ".bot-bottle" / "bottles" / f"{PROJECT_BOTTLE}.md"
+    return bottle_ref(PROJECT_BOTTLE, True) if old_path.is_file() else ""
 
 
 def _ask(question: str) -> str:

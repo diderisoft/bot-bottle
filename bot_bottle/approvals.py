@@ -130,7 +130,7 @@ def manifest_route(route: Route) -> dict[str, object]:
 
 
 def project_bottle_path(project: Path) -> Path:
-    return project / ".bot-bottle" / "bottles" / f"{PROJECT_BOTTLE}.md"
+    return project / ".bot-bottle" / "bottles" / f"{project.name}.md"
 
 
 def save_to_project(project: Path, routes: list[Route]) -> Path:
@@ -152,7 +152,7 @@ class KeepTarget:
 
     def label(self) -> str:
         if self.project is not None:
-            return f"./{PROJECT_BOTTLE} in {self.project.name}"
+            return f"./{self.path.stem} in {self.project.name}"
         return self.path.stem
 
 

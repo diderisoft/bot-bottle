@@ -139,14 +139,15 @@ class SaveToProject(unittest.TestCase):
     def test_creates_a_trusted_bottle_extending_basic(self) -> None:
         routes = Request.from_dict(_pending(_CURRENT + _STRIPE)).new_routes()
         path = save_to_project(self.project, routes)
-        self.assertEqual(self.project / ".bot-bottle" / "bottles" / "main.md", path)
+        # Bottle is named after the directory ("app"), per PRD 0094 chunk 4.
+        self.assertEqual(self.project / ".bot-bottle" / "bottles" / "app.md", path)
         frontmatter, _ = parse_frontmatter(path.read_text())
         self.assertEqual("basic", frontmatter["extends"])
         # Trusted already: it loads without asking.
         index = ManifestIndex.resolve(str(self.project))
         from bot_bottle.manifest.loader import load_bottle_chain  # pylint: disable=import-outside-toplevel
-        bottle, sources = load_bottle_chain("./main", index.bottle_dirs())
-        trust.check("./main", bottle, sources)
+        bottle, sources = load_bottle_chain("./app", index.bottle_dirs())
+        trust.check("./app", bottle, sources)
         route = next(r for r in bottle.egress.routes if r.Host == "api.stripe.com")
         self.assertEqual(("GET", "POST"), route.Matches[0].Methods)
         self.assertEqual("/v1/", route.Matches[0].Paths[0].Value)
@@ -217,17 +218,18 @@ class Review(unittest.TestCase):
         reviewer, client = self.reviewer("k", [_pending(_CURRENT + _STRIPE)])
         shown: list[str] = []
         reviewer.out = shown.append
-        target = KeepTarget(Path("/proj/.bot-bottle/bottles/main.md"), Path("/proj"))
+        # Bottle is named after the directory ("proj"), per PRD 0094 chunk 4.
+        target = KeepTarget(Path("/proj/.bot-bottle/bottles/proj.md"), Path("/proj"))
         with patch("bot_bottle.cli.commands.supervise.keep_target", return_value=target), \
                 patch("bot_bottle.approvals.keep_target", return_value=target), \
                 patch("bot_bottle.approvals.save_to_project",
-                      return_value=Path("/proj/.bot-bottle/bottles/main.md")) as save, \
+                      return_value=Path("/proj/.bot-bottle/bottles/proj.md")) as save, \
                 patch("sys.stdout", io.StringIO()):
             reviewer.run()
         self.assertEqual("approve", client.supervise_respond.call_args.kwargs["decision"])
-        self.assertIn("kept in ./main in proj", client.supervise_respond.call_args.kwargs["notes"])
+        self.assertIn("kept in ./proj in proj", client.supervise_respond.call_args.kwargs["notes"])
         self.assertEqual(Path("/proj"), save.call_args.args[0])
-        self.assertIn("allowed, and kept in ./.bot-bottle/bottles/main.md in the project; "
+        self.assertIn("allowed, and kept in ./.bot-bottle/bottles/proj.md in the project; "
                       "it applies from the next launch", shown)
         self.assertEqual(["api.stripe.com"], [r.host for r in save.call_args.args[1]])
 

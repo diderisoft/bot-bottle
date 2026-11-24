@@ -72,6 +72,13 @@ class Quick(unittest.TestCase):
     def test_a_project_bottle_replaces_basic(self) -> None:
         bottles = self.project / ".bot-bottle" / "bottles"
         bottles.mkdir(parents=True)
+        # Bottle is named after the directory ("app"), per PRD 0094 chunk 4.
+        (bottles / "app.md").write_text("---\nextends: basic\n---\n")
+        self.assertEqual(("./app",), self.run_quick([], ["pi"]).bottles)
+
+    def test_a_legacy_main_bottle_still_works(self) -> None:
+        bottles = self.project / ".bot-bottle" / "bottles"
+        bottles.mkdir(parents=True)
         (bottles / "main.md").write_text("---\nextends: basic\n---\n")
         self.assertEqual(("./main",), self.run_quick([], ["pi"]).bottles)
 
