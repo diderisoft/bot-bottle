@@ -23,7 +23,6 @@ _LAZY: dict[str, str] = {
     "provision_git_gate_dynamic_keys": ".provision",
     "revoke_git_gate_provisioned_keys": ".provision",
     "_provision_dynamic_key": ".provision",
-    "_resolve_identity_file": ".provision",
 }
 
 

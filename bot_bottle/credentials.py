@@ -11,8 +11,8 @@ Kind constants name what a minted credential is:
 - `aws`     — `access_key_id`, `secret_access_key`, optional `session_token`.
 - `ssh-key` — `private_key`, `public_key`: only git-gate uses it.
 
-Chunk 1 ships the `secret` and `prompt` sources. `assume_role`, `profile`,
-`host_login`, `file`, and `gitea_deploy_key` come in later chunks.
+Chunk 1 ships the `secret` and `prompt` sources; chunk 6 adds `file` and
+`profile`. `assume_role` and `gitea_deploy_key` come in later chunks.
 """
 
 from __future__ import annotations
@@ -246,10 +246,113 @@ class _HostLoginProvider(CredentialProvider):
         )
 
 
+class _FileProvider(CredentialProvider):
+    """Reads a credential from files on disk.
+
+    - `kind: ssh-key` (default): `private_key_path:` and `public_key_path:`
+      name the two files. File content is used as-is.
+    - `kind: token` (opt-in): `path:` names the file; trimmed content is
+      the token value.
+
+    The referenced files are part of the trust hash (`file_fields`).
+    Not `project_definable`: the path is this host's filesystem.
+    """
+
+    source = "file"
+    kinds = (KIND_SSH_KEY, KIND_TOKEN)
+    project_definable = False
+    file_fields: ClassVar[tuple[str, ...]] = ("path", "private_key_path", "public_key_path")
+
+    def mint(self, label: str, bottle_id: str,
+             settings: Mapping[str, object], secrets: SecretSource) -> MintedCredential:
+        kind = str(settings.get("kind", KIND_SSH_KEY))
+        if kind == KIND_TOKEN:
+            path = str(settings.get("path", ""))
+            if not path:
+                raise ValueError(f"credential {label!r}: source 'file' with kind 'token' "
+                                 f"requires 'path: /path/to/token-file'")
+            value = Path(path).read_text(encoding="utf-8").strip()
+            return MintedCredential(KIND_TOKEN, {"token": value}, None, f"file:{path}")
+        if kind == KIND_SSH_KEY:
+            priv_path = str(settings.get("private_key_path", ""))
+            pub_path = str(settings.get("public_key_path", ""))
+            if not priv_path or not pub_path:
+                raise ValueError(
+                    f"credential {label!r}: source 'file' with kind 'ssh-key' "
+                    f"requires 'private_key_path:' and 'public_key_path:'")
+            return MintedCredential(KIND_SSH_KEY, {
+                "private_key": Path(priv_path).read_text(encoding="utf-8"),
+                "public_key": Path(pub_path).read_text(encoding="utf-8").strip(),
+            }, None, f"file:{priv_path}")
+        raise ValueError(f"credential {label!r}: source 'file' does not support kind {kind!r}")
+
+    def describe(self, settings: Mapping[str, object]) -> Grant:
+        kind = str(settings.get("kind", KIND_SSH_KEY))
+        if kind == KIND_TOKEN:
+            path = settings.get("path", "?")
+            return Grant(acts_as="", authority="", scope="",
+                         lifetime="doesn't expire", starts_from=f"file: {path}")
+        priv = settings.get("private_key_path", "?")
+        return Grant(acts_as="", authority="", scope="",
+                     lifetime="doesn't expire", starts_from=f"file: {priv}")
+
+
+class _ProfileProvider(CredentialProvider):
+    """Reads AWS credentials from an AWS CLI credentials file profile.
+
+    Settings: `profile_name` (optional, defaults to `"default"`).
+    Reads `~/.aws/credentials` using the standard INI format; also checks
+    `AWS_SHARED_CREDENTIALS_FILE` for the path.
+
+    Not `project_definable`: credentials live on this host's filesystem.
+    """
+
+    source = "profile"
+    kinds = (KIND_AWS,)
+    project_definable = False
+
+    def mint(self, label: str, bottle_id: str,
+             settings: Mapping[str, object], secrets: SecretSource) -> MintedCredential:
+        import configparser  # pylint: disable=import-outside-toplevel
+        import os  # pylint: disable=import-outside-toplevel
+        profile = str(settings.get("profile_name", "default"))
+        creds_file = os.environ.get("AWS_SHARED_CREDENTIALS_FILE",
+                                    os.path.expanduser("~/.aws/credentials"))
+        config = configparser.ConfigParser()
+        if not config.read(creds_file):
+            raise ValueError(f"credential {label!r}: source 'profile': "
+                             f"AWS credentials file not found ({creds_file!r})")
+        if not config.has_section(profile):
+            raise ValueError(f"credential {label!r}: source 'profile': "
+                             f"profile {profile!r} not found in {creds_file!r}")
+        section = config[profile]
+        key_id = section.get("aws_access_key_id", "")
+        secret_key = section.get("aws_secret_access_key", "")
+        if not key_id or not secret_key:
+            raise ValueError(
+                f"credential {label!r}: source 'profile': profile {profile!r} "
+                f"is missing aws_access_key_id or aws_secret_access_key")
+        values: dict[str, str] = {
+            "access_key_id": key_id,
+            "secret_access_key": secret_key,
+        }
+        session_token = section.get("aws_session_token", "")
+        if session_token:
+            values["session_token"] = session_token
+        return MintedCredential(KIND_AWS, values, None, f"profile:{profile}")
+
+    def describe(self, settings: Mapping[str, object]) -> Grant:
+        profile = str(settings.get("profile_name", "default"))
+        return Grant(acts_as="", authority="", scope="",
+                     lifetime="doesn't expire", starts_from=f"AWS profile {profile!r}")
+
+
 _BUILTIN_PROVIDERS: tuple[CredentialProvider, ...] = (
     _SecretProvider(),
     _PromptProvider(),
     _HostLoginProvider(),
+    _FileProvider(),
+    _ProfileProvider(),
 )
 
 
@@ -318,4 +421,5 @@ __all__ = [
     "CredentialProvider", "CredentialRegistry",
     "Grant", "KIND_AWS", "KIND_SSH_KEY", "KIND_TOKEN", "KIND_FIELDS",
     "KNOWN_KINDS", "MintedCredential", "default_registry",
+    "_FileProvider", "_ProfileProvider",
 ]

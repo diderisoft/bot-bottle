@@ -130,6 +130,10 @@ class BottlePlan(ABC):
     # controller between prepare() and launch(), after calling mint() on each
     # `credentials:` block entry whose source is not `secret`.
     minted_cred_values: dict[str, str] = field(default_factory=dict, repr=False)
+    # Minted ssh-key credentials for `git_gate.repos` entries with `key: $label`.
+    # Keyed by credential label; values are the `MintedCredential.values` dict
+    # (private_key, public_key). Written to stage-dir files at provision time.
+    minted_ssh_keys: dict[str, dict[str, str]] = field(default_factory=dict, repr=False)
 
     @property
     def container_name(self) -> str:

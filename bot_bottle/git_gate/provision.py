@@ -197,11 +197,36 @@ def revoke_key(ref: DeployKeyRef, key_id: str, secrets: SecretSource) -> None:
     info(f"revoked deploy key {key_id} for git-gate.repos[{ref.name!r}]")
 
 
+def _write_cred_key(
+    entry: ManifestGitEntry, stage_dir: Path,
+    minted_ssh_keys: "dict[str, dict[str, str]]",
+) -> str:
+    """Write a minted ssh-key credential to `stage_dir/{name}-key` and return
+    the path. Used when `entry.CredLabel` names a `credentials:` entry."""
+    values = minted_ssh_keys.get(entry.CredLabel, {})
+    private_key = values.get("private_key", "")
+    if not private_key:
+        raise ValueError(
+            f"git-gate.repos[{entry.Name!r}]: credential {entry.CredLabel!r} "
+            f"has no private_key value"
+        )
+    key_file = stage_dir / f"{entry.Name}-key"
+    key_file.write_text(private_key)
+    key_file.chmod(0o600)
+    info(f"wrote credential key for git-gate.repos[{entry.Name!r}] "
+         f"from credential {entry.CredLabel!r}")
+    return str(key_file)
+
+
 def _resolve_identity_file(
     entry: ManifestGitEntry, slug: str, stage_dir: Path, secrets: SecretSource,
+    minted_ssh_keys: "dict[str, dict[str, str]] | None" = None,
 ) -> str:
     """The entry's SSH identity file, provisioning a deploy key first for
-    a forge kind."""
+    a forge kind, or writing a minted credential key for a `$label` entry."""
+    keys = minted_ssh_keys or {}
+    if entry.CredLabel and entry.CredLabel in keys:
+        return _write_cred_key(entry, stage_dir, keys)
     if mints_key(entry.Key):
         return _provision_dynamic_key(entry, slug, stage_dir, secrets)
     return entry.IdentityFile
@@ -212,6 +237,7 @@ def provision_git_gate_dynamic_keys(
     plan: "GitGatePlan",
     stage_dir: Path,
     secrets: SecretSource,
+    minted_ssh_keys: "dict[str, dict[str, str]] | None" = None,
 ) -> "GitGatePlan":
     """Provision the forge keys and return the updated plan. Runs at launch,
     after confirmation, so dry runs and aborted launches create no keys.
@@ -220,6 +246,7 @@ def provision_git_gate_dynamic_keys(
         return plan
     _revoke_leftover_keys(bottle, plan.slug, stage_dir, secrets)
 
+    keys = minted_ssh_keys or {}
     upstreams_by_name: dict[str, GitGateUpstream] = {
         upstream.name: upstream for upstream in plan.upstreams
     }
@@ -228,7 +255,10 @@ def provision_git_gate_dynamic_keys(
         upstream = upstreams_by_name.get(entry.Name)
         if upstream is None:
             continue
-        if mints_key(entry.Key):
+        if entry.CredLabel and entry.CredLabel in keys:
+            identity_file = _write_cred_key(entry, stage_dir, keys)
+            upstream = dataclasses.replace(upstream, identity_file=identity_file)
+        elif mints_key(entry.Key):
             identity_file = _provision_dynamic_key(entry, plan.slug, stage_dir, secrets)
             upstream = dataclasses.replace(upstream, identity_file=identity_file)
         updated.append(upstream)
@@ -292,5 +322,4 @@ __all__ = [
     "save_upstreams",
     "saved_upstreams",
     "_provision_dynamic_key",
-    "_resolve_identity_file",
 ]

@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...credentials import (
-    KIND_TOKEN, CredentialProvider, CredentialRegistry, MintedCredential, default_registry,
+    KIND_SSH_KEY, KIND_TOKEN, CredentialProvider, CredentialRegistry, MintedCredential,
+    default_registry,
 )
 from ...egress.service import cred_token_ref
 from ...lib import log
@@ -67,10 +68,15 @@ def mint_cred_block(
     renewal_secrets = FileSecrets(host_secrets_path())
 
     minted_values: dict[str, str] = {}
+    minted_ssh_keys: dict[str, dict[str, str]] = {}
     cred_entries: list[CredEntry] = []
 
     for label, cred in credentials.items():
-        if cred.source == "secret":
+        # `source: secret` token/aws credentials resolve through EgressTokenSecrets
+        # from the host secrets store, so they don't need minting here.
+        # `source: secret, kind: ssh-key` has no such path — the key must be
+        # physically written to a file by _write_cred_key, so we mint it here.
+        if cred.source == "secret" and cred.kind != KIND_SSH_KEY:
             continue
 
         provider = reg.get(cred.source)
@@ -83,15 +89,20 @@ def mint_cred_block(
 
         if cred.kind == KIND_TOKEN:
             minted_values[token_ref] = minted.values.get("token", "")
+        elif cred.kind == KIND_SSH_KEY:
+            minted_ssh_keys[label] = dict(minted.values)
 
         slots = _build_slots(plan.egress_plan.token_env_map, token_ref, minted)
         cred_entries.append((label, minted, provider, cred.settings, renewal_secrets, slots))
 
-    if not minted_values and not cred_entries:
+    if not minted_values and not minted_ssh_keys and not cred_entries:
         return plan, []
 
     updated = dataclasses.replace(
-        plan, minted_cred_values={**plan.minted_cred_values, **minted_values})
+        plan,
+        minted_cred_values={**plan.minted_cred_values, **minted_values},
+        minted_ssh_keys={**plan.minted_ssh_keys, **minted_ssh_keys},
+    )
     return updated, cred_entries
 
 
@@ -109,6 +120,33 @@ def _build_slots(
     if not matching:
         return {}
     return {field: matching for field in minted.values}
+
+
+def _rewrite_cred_key_files(
+    slug: str, entry: Any, minted: MintedCredential,
+) -> None:
+    """Re-write the SSH key file(s) for a credential-backed git-gate repo after
+    a daemon restart.  `entry.git_entry_names` names the repos; each gets a
+    `{name}-key` file in the git-gate stage dir for the bottle `slug`."""
+    git_names = getattr(entry, "git_entry_names", ())
+    if not git_names:
+        return
+    private_key = minted.values.get("private_key", "")
+    if not private_key:
+        log.warn(f"bottle {slug}: credential {entry.label!r} minted no private_key; "
+                 f"git-gate repos {list(git_names)} may lose SSH access after restart")
+        return
+    from ...bottle_state import git_gate_state_dir  # pylint: disable=import-outside-toplevel
+    stage_dir = git_gate_state_dir(slug)
+    try:
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        for git_name in git_names:
+            key_file = stage_dir / f"{git_name}-key"
+            key_file.write_text(private_key)
+            key_file.chmod(0o600)
+    except OSError as exc:
+        log.warn(f"bottle {slug}: couldn't re-write credential key files for "
+                 f"{entry.label!r}: {exc}")
 
 
 def recredential(
@@ -137,6 +175,8 @@ def recredential_block(
     cred_renewer: Any,
     push: Callable[[str, str, str, str], None],
     secrets_path: Path | None = None,
+    *,
+    registry: CredentialRegistry | None = None,
 ) -> None:
     """Re-mint a re-adopted bottle's `credentials:` block and register them."""
     # pylint: disable=import-outside-toplevel
@@ -156,7 +196,7 @@ def recredential_block(
     if bottle is None:
         return
     env_var_secret = read_env_var_secret(bottle)
-    reg = _reg()
+    reg = registry or _reg()
     secrets = FileSecrets(secrets_path or host_secrets_path())
     cred_entries = []
     for entry in adopted.cred_block.entries:
@@ -167,6 +207,8 @@ def recredential_block(
             continue
         try:
             minted = provider.mint(entry.label, record.id, entry.settings, secrets)
+            if entry.kind == KIND_SSH_KEY:
+                _rewrite_cred_key_files(record.id, entry, minted)
             for field_name, slot_list in entry.slots.items():
                 value = minted.values.get(field_name, "")
                 for slot in slot_list:
