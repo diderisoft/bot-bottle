@@ -2,12 +2,11 @@
 
 import unittest
 from datetime import datetime
-from unittest.mock import MagicMock
 
 from bot_bottle.credentials import (
     KIND_TOKEN, KIND_AWS, KIND_SSH_KEY,
     KNOWN_KINDS, ENV_KINDS, AUTH_BEARER_KINDS, AUTH_AWS_KINDS, GIT_KEY_KINDS,
-    Grant, MintedCredential, CredentialProvider, CredentialRegistry,
+    Grant, MintedCredential, CredentialRegistry,
     _SecretProvider, _PromptProvider, default_registry,
 )
 from bot_bottle.secret_source import MappingSecrets

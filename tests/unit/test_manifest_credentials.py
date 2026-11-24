@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from typing import Any
 
 from bot_bottle.manifest.bottle import ManifestBottle
 from bot_bottle.manifest.credentials import (
@@ -18,11 +19,11 @@ from bot_bottle.manifest.util import ManifestError
 
 # ─── helpers ────────────────────────────────────────────────────────────────
 
-def _bottle(d: dict) -> ManifestBottle:
+def _bottle(d: dict[str, Any]) -> ManifestBottle:
     return ManifestBottle.from_dict("test", d)
 
 
-def _creds(d: dict, **kw) -> dict[str, ManifestCredential]:
+def _creds(d: dict[str, Any], **kw: Any) -> dict[str, ManifestCredential]:
     return parse_credentials_block("test", d, **kw)
 
 
