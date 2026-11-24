@@ -37,7 +37,13 @@ DAEMON_LOCK_FILENAME = "daemon.lock"
 # controller running for the root isn't a failure: that exits 0.
 REFUSED_EXIT_STATUS = 78
 START_TIMEOUT_SECONDS = 15.0
-STOP_TIMEOUT_SECONDS = 10.0
+# How long a host controller gets to exit after SIGTERM before it's killed. A
+# busy one (bottles held, a console link to close) can take more than a few
+# seconds, and an upgrade's `up --restart --yes` used to fail on it.
+STOP_TIMEOUT_SECONDS = 30.0
+# How long SIGKILL gets. Its bottles survive it: the next host controller
+# adopts them, as after any crash.
+KILL_TIMEOUT_SECONDS = 5.0
 _POLL_SECONDS = 0.1
 
 
@@ -327,24 +333,42 @@ def _last_line(path: Path) -> str:
 
 
 def _stop(state: HostControlState) -> None:
-    try:
-        os.kill(state.pid, signal.SIGTERM)
-    except ProcessLookupError:
+    """Stop the host controller at `state`: SIGTERM, then SIGKILL if it
+    hasn't exited within `STOP_TIMEOUT_SECONDS`."""
+    if not _signal(state.pid, signal.SIGTERM) or _exited(state.pid, STOP_TIMEOUT_SECONDS):
         return
-    deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
+    warn(f"host controller (pid {state.pid}) didn't exit within "
+         f"{STOP_TIMEOUT_SECONDS:.0f}s of SIGTERM; killing it")
+    if not _signal(state.pid, signal.SIGKILL) or _exited(state.pid, KILL_TIMEOUT_SECONDS):
+        return
+    raise HostControlError(f"host controller (pid {state.pid}) didn't stop")
+
+
+def _signal(pid: int, signum: int) -> bool:
+    """Send `signum` to `pid`; False if it's already gone."""
+    try:
+        os.kill(pid, signum)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _exited(pid: int, timeout: float) -> bool:
+    """Whether `pid` exits within `timeout`, reaping it if it's our child."""
+    deadline = time.monotonic() + timeout
+    while True:
         try:
-            # Reap it if we started it.
-            if os.waitpid(state.pid, os.WNOHANG)[0] == state.pid:
-                return
+            if os.waitpid(pid, os.WNOHANG)[0] == pid:
+                return True
         except ChildProcessError:
             pass
         try:
-            os.kill(state.pid, 0)
+            os.kill(pid, 0)
         except ProcessLookupError:
-            return
+            return True
+        if time.monotonic() >= deadline:
+            return False
         time.sleep(_POLL_SECONDS)
-    raise HostControlError(f"host controller (pid {state.pid}) didn't stop")
 
 
 __all__ = [
