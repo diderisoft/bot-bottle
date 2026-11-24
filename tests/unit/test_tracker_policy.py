@@ -5,78 +5,8 @@ from unittest.mock import Mock
 
 from scripts.tracker_policy import (
     TRIAGE_LABEL,
-    check_pull_request,
-    deliberate_issue_numbers,
     ensure_issue_label,
 )
-
-
-class TestDeliberateIssueNumbers(unittest.TestCase):
-    def test_accepts_completing_and_noncompleting_forms(self):
-        self.assertEqual(
-            deliberate_issue_numbers("Fixes #12", "Part of #14; refs #15"),
-            {12, 14, 15},
-        )
-
-    def test_does_not_treat_incidental_number_as_link(self):
-        self.assertEqual(deliberate_issue_numbers("Audit #12", "See PR #14"), set())
-
-
-class TestCheckPullRequest(unittest.TestCase):
-    def test_accepts_unlabelled_pr_linked_to_real_issue(self):
-        api = Mock()
-        api.request.return_value = {"number": 12, "pull_request": None}
-        event = {"pull_request": {"title": "Change", "body": "Part of #12", "labels": []}}
-        self.assertEqual(check_pull_request(event, api), [])
-
-    def test_accepts_labelled_pr_without_issue(self):
-        api = Mock()
-        event = {
-            "pull_request": {
-                "title": "Change",
-                "body": "",
-                "labels": [{"name": "Kind/Documentation"}],
-            }
-        }
-        self.assertEqual(check_pull_request(event, api), [])
-        api.request.assert_not_called()
-
-    def test_rejects_unlabelled_pr_without_issue(self):
-        api = Mock()
-        event = {"pull_request": {"title": "Change", "body": "", "labels": []}}
-        errors = check_pull_request(event, api)
-        self.assertEqual(len(errors), 1)
-        self.assertIn("either have a label or reference an issue", errors[0])
-        api.request.assert_not_called()
-
-    def test_rejects_labelled_pr_linked_to_real_issue(self):
-        api = Mock()
-        api.request.return_value = {"number": 12, "pull_request": None}
-        event = {
-            "pull_request": {
-                "title": "Change",
-                "body": "Closes #12",
-                "labels": [{"name": "Kind/Documentation"}],
-            }
-        }
-        errors = check_pull_request(event, api)
-        self.assertEqual(len(errors), 1)
-        self.assertIn("exactly one tracking mode", errors[0])
-
-    def test_still_validates_issue_reference_when_both_modes_are_used(self):
-        api = Mock()
-        api.request.return_value = {"number": 12, "pull_request": {}}
-        event = {
-            "pull_request": {
-                "title": "Change",
-                "body": "Closes #12",
-                "labels": [{"name": "Kind/Bug"}],
-            }
-        }
-        errors = check_pull_request(event, api)
-        self.assertEqual(len(errors), 2)
-        self.assertIn("exactly one tracking mode", errors[0])
-        self.assertIn("not an issue", errors[1])
 
 
 class TestEnsureIssueLabel(unittest.TestCase):

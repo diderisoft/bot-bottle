@@ -7,6 +7,10 @@
 > **Amended 2026-07-26.** A pull request may carry labels directly instead of
 > linking a tracking issue. When a PR does link an issue, the issue remains the
 > canonical owner of planning metadata and the reference is validated.
+>
+> **Amended 2026-11-23.** The PR check is removed: a PR no longer has to link an
+> issue or carry a label, and nothing validates its issue references. The
+> issue-label repair below still runs.
 
 ## Context
 
@@ -44,9 +48,9 @@ Issue references use one of these forms:
 - `Part of #123`, `Related to #123`, `Refs #123`, or `References #123` when it
   contributes without completing it.
 
-Gitea Actions enforces the exclusive either/or PR rule, validates any issue
-references, and repairs the empty issue-label state. Branch protection makes
-the PR policy check required.
+Gitea Actions repairs the empty issue-label state. (It also enforced the
+either/or PR rule and validated issue references until 2026-11-23; see the
+amendment above.)
 
 The policy applies from 2026-07-18 onward. Existing issues may be labelled as
 they are encountered, but closed PRs are grandfathered: no retrospective
@@ -65,12 +69,9 @@ issues or PR labels are created solely to make history conform.
   classification.
 - Direct issue creation remains convenient; automation repairs a missing label
   immediately after creation because Gitea has no native required-label rule.
-- The required check must be configured in branch protection after this
-  workflow lands.
 
 ## Links
 
 - Issue #405.
-- `.gitea/workflows/tracker-policy-pr.yml`.
 - `.gitea/workflows/tracker-policy-issues.yml`.
 - `scripts/tracker_policy.py`.
