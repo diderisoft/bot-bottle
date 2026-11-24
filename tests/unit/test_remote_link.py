@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from bot_bottle.approvals import card_message
+from bot_bottle.approvals import Request, card_message
 from bot_bottle.cli.commands import remote as remote_cmd
 from bot_bottle.cli.commands.login import _save_credentials
 from bot_bottle.contract.hostctl import LaunchRequest
@@ -439,6 +439,59 @@ class TestApprovals(unittest.TestCase):
             with self.subTest(msg=msg):
                 asyncio.run(link.handle({"type": "approval", **msg}))
         client.supervise_respond.assert_not_called()
+
+    def test_an_approval_with_a_request_id_is_told_what_happened(self) -> None:
+        link, sent, _ = self.link([_pending()])
+        asyncio.run(link.push_attention())
+        asyncio.run(link.handle({"type": "approval", "agent_id": "a1", "decision": "allow",
+                                 "since": "2026-10-23T18:00:01.123456", "request_id": "q"}))
+        reply = [m for m in sent if m["type"] == "approval_answered"]
+        self.assertEqual([{"type": "approval_answered", "request_id": "q", "agent_id": "a1",
+                           "message": "allowed once"}], reply)
+
+    def test_a_stale_approval_with_a_request_id_is_told_so(self) -> None:
+        link, sent, _ = self.link([_pending()])
+        asyncio.run(link.push_attention())
+        asyncio.run(link.handle({"type": "approval", "agent_id": "a1", "decision": "allow",
+                                 "since": "2026-10-23T17:00:00", "request_id": "q"}))
+        self.assertIn("no longer waiting", sent[-1]["error"])
+
+    def test_an_approval_that_fails_says_why_and_raises_the_card_again(self) -> None:
+        link, sent, client = self.link([_pending()])
+        asyncio.run(link.push_attention())
+        client.supervise_respond.side_effect = RuntimeError("orchestrator is down")
+        with mock.patch.object(remote.log, "warn") as warn:
+            asyncio.run(link.handle({"type": "approval", "agent_id": "a1", "decision": "allow",
+                                     "since": "2026-10-23T18:00:01.123456",
+                                     "request_id": "q"}))
+        self.assertIn("couldn't allow bottle-1's egress-allow request: orchestrator is down",
+                      warn.call_args.args[0])
+        reply = [m for m in sent if m["type"] == "approval_answered"][-1]
+        self.assertEqual("Couldn't allow it: orchestrator is down", reply["error"])
+        self.assertEqual(2, len([m for m in sent if m["type"] == "attention"]))
+
+    def test_a_plain_allow_for_a_card_with_its_own_answer_says_the_console_is_old(self) -> None:
+        pending = [{**_pending(), "tool": "launch-bottle",
+                    "proposed_file": '{"agent": "claude", "bottles": [], "prompt": "go"}'}]
+        link, sent, client = self.link(pending)
+        link._asking["a1"] = Request.from_dict(pending[0])  # pylint: disable=protected-access
+        with mock.patch.object(remote.log, "warn") as warn:
+            asyncio.run(link.handle({"type": "approval", "agent_id": "a1", "decision": "allow",
+                                     "since": "2026-10-23T18:00:01.123456",
+                                     "request_id": "q"}))
+        client.supervise_respond.assert_not_called()
+        warned = " ".join(c.args[0] for c in warn.call_args_list)
+        self.assertIn("not 'launch_bottle_answer'; it may need updating", warned)
+        reply = [m for m in sent if m["type"] == "approval_answered"][-1]
+        self.assertIn("the console may need updating", reply["error"])
+
+    def test_an_approval_without_a_request_id_gets_no_reply(self) -> None:
+        # A protocol-1 console sends none and expects none.
+        link, sent, _ = self.link([_pending()])
+        asyncio.run(link.push_attention())
+        asyncio.run(link.handle({"type": "approval", "agent_id": "a1", "decision": "allow",
+                                 "since": "2026-10-23T18:00:01.123456"}))
+        self.assertEqual([], [m for m in sent if m["type"] == "approval_answered"])
 
     def test_requests_from_bottles_this_link_did_not_launch_are_not_raised(self) -> None:
         link, sent, _ = self.link([_pending(session="someone-elses")])
