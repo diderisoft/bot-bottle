@@ -1,82 +1,17 @@
+import json
 import os
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 from unittest.mock import Mock
 
+from scripts import tracker_policy
 from scripts.tracker_policy import (
     TRIAGE_LABEL,
-    check_pull_request,
-    deliberate_issue_numbers,
     ensure_issue_label,
 )
-
-
-class TestDeliberateIssueNumbers(unittest.TestCase):
-    def test_accepts_completing_and_noncompleting_forms(self):
-        self.assertEqual(
-            deliberate_issue_numbers("Fixes #12", "Part of #14; refs #15"),
-            {12, 14, 15},
-        )
-
-    def test_does_not_treat_incidental_number_as_link(self):
-        self.assertEqual(deliberate_issue_numbers("Audit #12", "See PR #14"), set())
-
-
-class TestCheckPullRequest(unittest.TestCase):
-    def test_accepts_unlabelled_pr_linked_to_real_issue(self):
-        api = Mock()
-        api.request.return_value = {"number": 12, "pull_request": None}
-        event = {"pull_request": {"title": "Change", "body": "Part of #12", "labels": []}}
-        self.assertEqual(check_pull_request(event, api), [])
-
-    def test_accepts_labelled_pr_without_issue(self):
-        api = Mock()
-        event = {
-            "pull_request": {
-                "title": "Change",
-                "body": "",
-                "labels": [{"name": "Kind/Documentation"}],
-            }
-        }
-        self.assertEqual(check_pull_request(event, api), [])
-        api.request.assert_not_called()
-
-    def test_rejects_unlabelled_pr_without_issue(self):
-        api = Mock()
-        event = {"pull_request": {"title": "Change", "body": "", "labels": []}}
-        errors = check_pull_request(event, api)
-        self.assertEqual(len(errors), 1)
-        self.assertIn("either have a label or reference an issue", errors[0])
-        api.request.assert_not_called()
-
-    def test_rejects_labelled_pr_linked_to_real_issue(self):
-        api = Mock()
-        api.request.return_value = {"number": 12, "pull_request": None}
-        event = {
-            "pull_request": {
-                "title": "Change",
-                "body": "Closes #12",
-                "labels": [{"name": "Kind/Documentation"}],
-            }
-        }
-        errors = check_pull_request(event, api)
-        self.assertEqual(len(errors), 1)
-        self.assertIn("exactly one tracking mode", errors[0])
-
-    def test_still_validates_issue_reference_when_both_modes_are_used(self):
-        api = Mock()
-        api.request.return_value = {"number": 12, "pull_request": {}}
-        event = {
-            "pull_request": {
-                "title": "Change",
-                "body": "Closes #12",
-                "labels": [{"name": "Kind/Bug"}],
-            }
-        }
-        errors = check_pull_request(event, api)
-        self.assertEqual(len(errors), 2)
-        self.assertIn("exactly one tracking mode", errors[0])
-        self.assertIn("not an issue", errors[1])
 
 
 class TestEnsureIssueLabel(unittest.TestCase):
@@ -119,3 +54,34 @@ class TestEnsureIssueLabel(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMain(unittest.TestCase):
+    def setUp(self) -> None:
+        tmp = self.enterContext(tempfile.TemporaryDirectory())
+        self.event = Path(tmp) / "event.json"
+        self.event.write_text(json.dumps(
+            {"issue": {"number": 405, "labels": [], "pull_request": None}}), encoding="utf-8")
+        env = {
+            "GITHUB_API_URL": "https://api.example.test",
+            "GITHUB_REPOSITORY": "acme/app",
+            "GITHUB_TOKEN": "t",
+            "GITHUB_EVENT_PATH": str(self.event),
+        }
+        patcher = mock.patch.dict(os.environ, env, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_label_issue_labels_the_event_issue(self):
+        with mock.patch.object(tracker_policy, "GiteaApi") as api_cls, \
+                mock.patch.object(sys, "argv", ["tracker_policy.py", "label-issue"]), \
+                mock.patch("builtins.print") as printed:
+            api_cls.return_value.request.side_effect = [[{"id": 55, "name": TRIAGE_LABEL}], None]
+            self.assertEqual(tracker_policy.main(), 0)
+        api_cls.assert_called_once_with("https://api.example.test", "acme/app", "t")
+        printed.assert_called_once_with(f"Applied {TRIAGE_LABEL}.")
+
+    def test_check_pr_is_no_longer_a_command(self):
+        with mock.patch.object(sys, "argv", ["tracker_policy.py", "check-pr"]), \
+                mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+            tracker_policy.main()

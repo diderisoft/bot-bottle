@@ -1,28 +1,18 @@
 #!/usr/bin/env python3
-"""Enforce the repository's issue/PR metadata policy in GitHub and Gitea Actions."""
+"""Repair unlabelled issues in GitHub and Gitea Actions (ADR 0005)."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import re
-import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
 
 
-ISSUE_REFERENCE = re.compile(
-    r"(?im)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|part\s+of|"
-    r"related\s+to|refs?|references)\s+#(\d+)\b"
-)
 TRIAGE_LABEL = "Status/Needs Triage"
 
-
-def deliberate_issue_numbers(title: str, body: str) -> set[int]:
-    """Return same-repository issue numbers referenced intentionally."""
-    return {int(match) for match in ISSUE_REFERENCE.findall(f"{title}\n{body}")}
 
 
 class GiteaApi:
@@ -49,44 +39,6 @@ class GiteaApi:
             return json.load(response)
 
 
-def check_pull_request(event: dict[str, Any], api: GiteaApi) -> list[str]:
-    """Return policy violations for a pull_request event."""
-    pull = event["pull_request"]
-    errors: list[str] = []
-    labels = pull.get("labels") or []
-    numbers = deliberate_issue_numbers(pull.get("title", ""), pull.get("body", ""))
-    if labels and numbers:
-        errors.append(
-            "PR must use exactly one tracking mode: remove PR labels when "
-            "linking an issue, or remove the issue reference when labels "
-            "belong on the PR."
-        )
-    if not numbers:
-        if not labels:
-            errors.append(
-                "PR must either have a label or reference an issue with "
-                "Closes/Fixes/Resolves #N, Part of #N, Related to #N, "
-                "Refs #N, or References #N."
-            )
-        return errors
-
-    real_issues = 0
-    for number in sorted(numbers):
-        try:
-            item = api.request("GET", f"/issues/{number}")
-        except urllib.error.HTTPError as error:
-            if error.code == 404:
-                errors.append(f"Referenced issue #{number} does not exist.")
-                continue
-            raise
-        if item.get("pull_request") is not None:
-            errors.append(f"#{number} is a pull request, not an issue.")
-        else:
-            real_issues += 1
-
-    if not real_issues and not errors:
-        errors.append("PR must reference at least one real issue.")
-    return errors
 
 
 def ensure_issue_label(event: dict[str, Any], api: GiteaApi) -> bool:
@@ -112,7 +64,7 @@ def _load_event(path: str) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("check-pr", "label-issue"))
+    parser.add_argument("command", choices=("label-issue",))
     parser.add_argument("--event", default=os.environ.get("GITHUB_EVENT_PATH"))
     args = parser.parse_args()
     if not args.event:
@@ -124,14 +76,6 @@ def main() -> int:
         os.environ["GITHUB_TOKEN"],
     )
     event = _load_event(args.event)
-    if args.command == "check-pr":
-        errors = check_pull_request(event, api)
-        if errors:
-            print("\n".join(f"::error::{error}" for error in errors))
-            return 1
-        print("PR tracker policy passed.")
-        return 0
-
     changed = ensure_issue_label(event, api)
     print(f"Applied {TRIAGE_LABEL}." if changed else "Issue already has a label.")
     return 0

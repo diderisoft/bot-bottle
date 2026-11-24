@@ -15,7 +15,8 @@ up front and describes what keeps that safe for a security tool.
   records (`docs/decisions/`); how the system works today is in
   `docs/reference/`.
   Reviewers check code against those, not against a chat transcript.
-- **Every PR links an issue** (ADR 0005), so each change has a stated reason.
+- **Every PR states its reason** in its description, linking an issue when
+  one exists (ADR 0005).
 
 ## What CI enforces
 
