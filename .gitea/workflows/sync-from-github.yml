@@ -1,0 +1,57 @@
+# Keep this repo's main and tags a copy of GitHub's (diderisoft/bot-bottle),
+# where main lives and PRs merge. Every five minutes, it fast-forwards main
+# and adds new tags. Nothing is forced: if this main has commits GitHub
+# lacks, or a tag here differs from GitHub's, the run fails and changes
+# nothing, so work pushed here by mistake is never overwritten.
+#
+# GitHub is public, so the fetch needs no credentials, and GitHub holds none
+# for Gitea. The push uses BOT_BOTTLE_RELEASE_PUSH_TOKEN, a token for a user
+# on main's push allowlist here. A push with it starts this repo's push
+# workflows, as merges here used to.
+#
+# Releases (pre-release-test.yml) commit and tag on GitHub; this brings them
+# here.
+
+name: sync-from-github
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fast-forward main and add tags from GitHub
+        env:
+          PUSH_TOKEN: ${{ secrets.BOT_BOTTLE_RELEASE_PUSH_TOKEN }}
+          GITEA_REMOTE: ${{ github.server_url }}/${{ github.repository }}.git
+        run: |
+          set -eu
+          if [ -z "$PUSH_TOKEN" ]; then
+            echo "BOT_BOTTLE_RELEASE_PUSH_TOKEN is not set; can't push to main" >&2
+            exit 1
+          fi
+          github=https://github.com/diderisoft/bot-bottle.git
+          helper='!f() { echo username=release; echo "password=$PUSH_TOKEN"; }; f'
+          git init -q sync && cd sync
+          git fetch -q "$github" '+refs/heads/main:refs/remotes/github/main' \
+            '+refs/tags/*:refs/tags/*'
+          git -c credential.helper="$helper" fetch -q "$GITEA_REMOTE" \
+            '+refs/heads/main:refs/remotes/gitea/main'
+          ours=$(git rev-parse gitea/main)
+          theirs=$(git rev-parse github/main)
+          if [ "$ours" = "$theirs" ]; then
+            echo "main is up to date at $ours"
+          elif git merge-base --is-ancestor "$ours" "$theirs"; then
+            echo "fast-forwarding main $ours..$theirs ($(git rev-list --count "$ours..$theirs") commits)"
+            git -c credential.helper="$helper" push "$GITEA_REMOTE" "$theirs:refs/heads/main"
+          else
+            echo "main here has commits GitHub lacks; not syncing:" >&2
+            git log --oneline "$theirs..$ours" >&2
+            exit 1
+          fi
+          # Unforced: a tag already here is left alone if it matches GitHub's,
+          # and rejected (failing the run) if it doesn't.
+          git -c credential.helper="$helper" push -q "$GITEA_REMOTE" 'refs/tags/*:refs/tags/*'
