@@ -34,22 +34,28 @@ class TestBbCredentialScript(unittest.TestCase):
 
     def _run(self, args: list[str], *, proxy: str = "",
              response: dict[str, Any] | None = None,
-             status: int = 200) -> tuple[int, str, str, list[urllib.request.Request]]:
+             status: int = 200, prog: str = "bb-credential", stdin: str = "",
+             env: dict[str, str] | None = None,
+             fail: Exception | None = None) -> tuple[int, str, str, list[urllib.request.Request]]:
         """Run `bb_credential.main()`; return (rc, stdout, stderr, requests)."""
         seen: list[urllib.request.Request] = []
 
         def fake_urlopen(req: urllib.request.Request, timeout: float = 10) -> _Response:
             seen.append(req)
-            if status == 404:
-                raise urllib.error.HTTPError(req.full_url, 404, "Not Found",
+            if fail is not None:
+                raise fail
+            if status != 200:
+                raise urllib.error.HTTPError(req.full_url, status, "error",
                                              mock.Mock(), None)
-            return _Response(response or {"values": {"token": "test-tok"}})
+            return _Response(response if response is not None
+                             else {"values": {"token": "test-tok"}})
 
         out, err = io.StringIO(), io.StringIO()
-        env = {"HTTP_PROXY": proxy} if proxy else {}
+        environ = {"HTTP_PROXY": proxy, "http_proxy": "", "BB_CRED_LABEL": "", **(env or {})}
         rc = 0
-        with mock.patch.dict("os.environ", env, clear=False), \
-             mock.patch("sys.argv", ["bb-credential", *args]), \
+        with mock.patch.dict("os.environ", environ, clear=False), \
+             mock.patch("sys.argv", [prog, *args]), \
+             mock.patch("sys.stdin", io.StringIO(stdin)), \
              mock.patch("urllib.request.urlopen", side_effect=fake_urlopen), \
              contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
@@ -115,6 +121,88 @@ class TestBbCredentialScript(unittest.TestCase):
                                   proxy="http://user:mytoken@egress:3128")
         self.assertTrue(seen)
         self.assertEqual(seen[0].get_header("X-bot-bottle-identity"), "mytoken")
+
+
+    def test_gateway_error_exits_1(self) -> None:
+        rc, _, err, _ = self._run(["get", "c"], status=500)
+        self.assertEqual(rc, 1)
+        self.assertIn("gateway error 500", err)
+
+    def test_unreachable_gateway_exits_1(self) -> None:
+        rc, _, err, _ = self._run(["get", "c"], fail=OSError("refused"))
+        self.assertEqual(rc, 1)
+        self.assertIn("could not reach gateway", err)
+
+    def test_default_gateway_without_proxy(self) -> None:
+        _, _, _, seen = self._run(["get", "my cred"])
+        self.assertEqual(seen[0].full_url, "http://egress:%d/bb-credential/my%%20cred"
+                         % bb_credential._SUPERVISE_PORT)  # pylint: disable=protected-access
+        self.assertIsNone(seen[0].get_header("X-bot-bottle-identity"))
+
+    def test_get_without_label_exits_2(self) -> None:
+        self.assertEqual(self._run(["get"])[0], 2)
+
+    def test_get_with_no_values_exits_1(self) -> None:
+        rc, _, err, _ = self._run(["get", "c"], response={"values": {}})
+        self.assertEqual(rc, 1)
+        self.assertIn("has no values", err)
+
+    def test_aws_without_label_exits_2(self) -> None:
+        self.assertEqual(self._run(["aws"])[0], 2)
+
+    def test_k8s_without_label_exits_2(self) -> None:
+        self.assertEqual(self._run(["k8s"])[0], 2)
+
+    def test_k8s_expiry(self) -> None:
+        _, out, _, _ = self._run(["k8s", "c"], response={
+            "values": {"token": "t"}, "expires_at": "2026-11-14T13:00:00Z"})
+        self.assertEqual(json.loads(out)["status"]["expirationTimestamp"],
+                         "2026-11-14T13:00:00Z")
+
+    def test_git_get_serves_the_username_label(self) -> None:
+        rc, out, _, seen = self._run(
+            ["git", "get"], stdin="protocol=https\nhost=g.example.com\nusername=gh-tok\n\n",
+            response={"values": {"token": "secret-tok"}})
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "username=gh-tok\npassword=secret-tok\n")
+        self.assertTrue(seen[0].full_url.endswith("/bb-credential/gh-tok"))
+
+    def test_git_label_from_env(self) -> None:
+        _, out, _, _ = self._run(["git", "get"], stdin="host=g.example.com\n",
+                                 env={"BB_CRED_LABEL": "envlabel"})
+        self.assertIn("username=envlabel", out)
+
+    def test_git_store_and_erase_are_no_ops(self) -> None:
+        for action in ("store", "erase"):
+            rc, out, _, seen = self._run(["git", action], stdin="username=x\n")
+            self.assertEqual((rc, out, seen), (0, "", []))
+
+    def test_git_without_label_says_nothing(self) -> None:
+        rc, out, _, seen = self._run(["git", "get"], stdin="host=g.example.com\n")
+        self.assertEqual((rc, out, seen), (0, "", []))
+
+    def test_git_without_token_says_nothing(self) -> None:
+        rc, out, _, _ = self._run(["git", "get"], stdin="username=x\n",
+                                  response={"values": {"other": "v"}})
+        self.assertEqual((rc, out), (0, ""))
+
+    def test_docker_get(self) -> None:
+        rc, out, _, _ = self._run(["get"], prog="/usr/local/bin/docker-credential-bb",
+                                  stdin="https://registry.example.com\n",
+                                  env={"BB_CRED_LABEL": "reg"},
+                                  response={"values": {"token": "rtok"}})
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out), {"ServerURL": "https://registry.example.com",
+                                           "Username": "reg", "Secret": "rtok"})
+
+    def test_docker_get_needs_a_label(self) -> None:
+        rc, _, err, _ = self._run([], prog="docker-credential-bb", stdin="https://r\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("BB_CRED_LABEL", err)
+
+    def test_docker_other_actions_are_no_ops(self) -> None:
+        rc, out, _, seen = self._run(["store"], prog="docker-credential-bb")
+        self.assertEqual((rc, out, seen), (0, "", []))
 
 
 if __name__ == "__main__":

@@ -195,6 +195,28 @@ class TestUpdateAgentSecret(unittest.TestCase):
                 self.c.update_agent_secret("b1", "A", "v", "key")
 
 
+class TestPushReadableCredential(unittest.TestCase):
+    def setUp(self) -> None:
+        self.c = OrchestratorClient("http://orch:8080")
+
+    def test_success_puts_the_values(self) -> None:
+        with patch(_URLOPEN, return_value=_resp(200, {"stored": True})) as opened:
+            self.assertTrue(self.c.push_readable_credential("b1", "my/cred", {"token": "t"}))
+        request = opened.call_args.args[0]
+        self.assertEqual("PUT", request.get_method())
+        self.assertTrue(request.full_url.endswith("/bottles/b1/readable-credential/my%2Fcred"))
+        self.assertEqual({"values": {"token": "t"}}, json.loads(request.data))
+
+    def test_unknown_bottle_is_false(self) -> None:
+        with patch(_URLOPEN, side_effect=_http_error(404)):
+            self.assertFalse(self.c.push_readable_credential("b1", "c", {}))
+
+    def test_other_status_raises(self) -> None:
+        with patch(_URLOPEN, side_effect=_http_error(500)):
+            with self.assertRaises(OrchestratorClientError):
+                self.c.push_readable_credential("b1", "c", {})
+
+
 class TestHealthAndPolicy(unittest.TestCase):
     def setUp(self) -> None:
         self.c = OrchestratorClient("http://orch:8080")
