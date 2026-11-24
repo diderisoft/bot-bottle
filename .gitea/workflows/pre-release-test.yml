@@ -461,14 +461,13 @@ jobs:
       # The tag must carry the code the suite tested. If main moved during the
       # run, stop before promoting anything; the commit step checks again. A
       # rerun after the tag push failed finds this release's own commit on
-      # the tested one, which is fine.
+      # the tested one, which is fine. Main is GitHub's: this repo is a copy
+      # that sync-from-github.yml fast-forwards, so it's checked there.
       - name: Check main is still the tested commit
         env:
-          RELEASE_PUSH_TOKEN: ${{ secrets.BOT_BOTTLE_RELEASE_PUSH_TOKEN }}
           TESTED_SHA: ${{ github.sha }}
         run: |
-          helper='!f() { echo username=release; echo "password=$RELEASE_PUSH_TOKEN"; }; f'
-          git -c credential.helper="$helper" fetch https://gitea.dideric.is/didericis/bot-bottle.git main
+          git fetch https://github.com/diderisoft/bot-bottle.git main
           main_sha=$(git rev-parse FETCH_HEAD)
           if [ "$main_sha" != "$TESTED_SHA" ] && ! {
               [ "$(git rev-parse -q --verify "$main_sha^" || true)" = "$TESTED_SHA" ] &&
@@ -481,12 +480,9 @@ jobs:
       # The checkout has no tags. A release that reused every image publishes
       # nothing at its version, so only its tag shows the version is taken.
       - name: Fetch the release tags
-        env:
-          RELEASE_PUSH_TOKEN: ${{ secrets.BOT_BOTTLE_RELEASE_PUSH_TOKEN }}
         run: |
-          helper='!f() { echo username=release; echo "password=$RELEASE_PUSH_TOKEN"; }; f'
-          git -c credential.helper="$helper" fetch --no-write-fetch-head \
-            https://gitea.dideric.is/didericis/bot-bottle.git 'refs/tags/v*:refs/tags/v*'
+          git fetch --no-write-fetch-head \
+            https://github.com/diderisoft/bot-bottle.git 'refs/tags/v*:refs/tags/v*'
 
       - name: Download the tested manifest
         uses: actions/download-artifact@v3
@@ -539,9 +535,11 @@ jobs:
       # past the release never pulls them: it stops, and builds the infra
       # images only with `bot-bottle up --build` (bot_bottle/infra_image.py),
       # so the pins stay safe as main moves.
-      # Needs the BOT_BOTTLE_RELEASE_PUSH_TOKEN secret: a token for a user on
-      # main's push allowlist. It reaches git through a credential helper that
-      # reads the environment, never the command line. The same commit bumps
+      # The commit and tag go to GitHub, where main lives; sync-from-github.yml
+      # copies them here. Needs the BOT_BOTTLE_GITHUB_PUSH_TOKEN secret: a
+      # GitHub token that can push to diderisoft/bot-bottle (fine-grained,
+      # Contents: read and write, on that repo only). It reaches git through a
+      # credential helper that reads the environment, never the command line. The same commit bumps
       # pyproject to the released version, so the next release starts above it,
       # and the release commit is tagged `vX.Y.Z` for install.sh to install.
       # The release commit goes only directly on the tested commit: if main
@@ -549,19 +547,19 @@ jobs:
       # fails and the release is re-run instead.
       - name: Commit the released manifest to main
         env:
-          RELEASE_PUSH_TOKEN: ${{ secrets.BOT_BOTTLE_RELEASE_PUSH_TOKEN }}
+          RELEASE_PUSH_TOKEN: ${{ secrets.BOT_BOTTLE_GITHUB_PUSH_TOKEN }}
           TESTED_SHA: ${{ github.sha }}
         run: |
           if [ -z "$RELEASE_PUSH_TOKEN" ]; then
-            echo "BOT_BOTTLE_RELEASE_PUSH_TOKEN is not set; installs won't get this release's pins." >&2
+            echo "BOT_BOTTLE_GITHUB_PUSH_TOKEN is not set; installs won't get this release's pins." >&2
             exit 1
           fi
           version=$(cat released/release-version)
           test -n "$version"
           git config user.name "bot-bottle release"
           git config user.email "release@bot-bottle.invalid"
-          remote="https://gitea.dideric.is/didericis/bot-bottle.git"
-          helper='!f() { echo username=release; echo "password=$RELEASE_PUSH_TOKEN"; }; f'
+          remote="https://github.com/diderisoft/bot-bottle.git"
+          helper='!f() { echo username=x-access-token; echo "password=$RELEASE_PUSH_TOKEN"; }; f'
           tag="v$version"
           # Tag the release commit `vX.Y.Z` (annotated): install.sh installs
           # the latest such tag by default. Idempotent: a tag already on the
