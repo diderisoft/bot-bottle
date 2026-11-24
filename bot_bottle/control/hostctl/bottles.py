@@ -37,7 +37,8 @@ from ...lib.config_store import ConfigStore, HostBudget
 from . import bottle_metrics, budget, library_link, relabel
 from .build import RESTART_NEEDED
 from .audit_events import HostAudit, digest_content, digest_request, manifest_content
-from .cred_mint import CredEntry, audit_cred_entries, mint_cred_block, recredential, recredential_block
+from .cred_mint import (CredEntry, mint_cred_block, push_readable_credential, recredential,
+                        recredential_block, start_cred_block)
 from .credential_refresh import CredentialRefresher
 from .credential_renewer import CredentialRenewer
 from .sessions import ExitStatus, SessionManager, SessionRecord
@@ -130,14 +131,6 @@ def _push_credential(registry_id: str, slot: str, value: str, env_var_secret: st
     for_bottle(lambda client: client.update_agent_secret(registry_id, slot, value,
                                                          env_var_secret),
                what=f"bottle {registry_id}")
-
-
-def _push_readable_credential(bottle_id: str, label: str, values: dict[str, str]) -> None:
-    """Push an `agent_can_read` credential's (renewed) values to the orchestrator."""
-    # pylint: disable=import-outside-toplevel
-    from ..client import for_bottle
-    for_bottle(lambda client: client.push_readable_credential(bottle_id, label, values),
-               what=f"bottle {bottle_id}")
 
 
 def _chain(request: LaunchRequest) -> tuple[str, ...]:
@@ -238,7 +231,7 @@ class BottleService:
         self.credentials = CredentialRefresher(_push_credential, audit=self.audit)
         # Keeps `credentials:` block minted values current; started by the daemon.
         self.cred_renewer = CredentialRenewer(
-            _push_credential, audit=self.audit, readable_push=_push_readable_credential)
+            _push_credential, audit=self.audit, readable_push=push_readable_credential)
         self._lock = threading.Lock()
         sessions.register(SESSION_KIND, self._finish)
 
@@ -462,20 +455,8 @@ class BottleService:
                             identity, record.credentials, registry_id=bottle.registry_id,
                             bottle=bottle, env_var_secret=bottle.env_var_secret,
                             current=plan.agent_provision.provisioned_env)
-                    readable = getattr(plan, "readable_cred_values", {})
-                    if cred_entries:
-                        readable_labels = frozenset(readable)
-                        self.cred_renewer.add(
-                            identity, bottle.registry_id, bottle.env_var_secret, cred_entries,
-                            readable_labels=readable_labels)
-                        audit_cred_entries(cred_entries, self.audit, identity, activation)
-                    if readable:
-                        for lbl, vals in readable.items():
-                            try:
-                                _push_readable_credential(bottle.registry_id, lbl, vals)
-                            except Exception as e:  # pylint: disable=broad-exception-caught
-                                log.warn(f"bottle {identity}: couldn't push readable "
-                                         f"credential {lbl!r}: {e}")
+                    start_cred_block(self.cred_renewer, self.audit, cred_entries, plan,
+                                     identity=identity, bottle=bottle, activation=activation)
                     self._sessions.start(SessionRecord(
                         id=identity, kind=SESSION_KIND,
                         meta={"backend": backend.name, "agent": request.agent,

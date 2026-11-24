@@ -45,6 +45,7 @@ from bot_bottle.gateway.supervisor.mcp_dispatch import (
 )
 from bot_bottle.contract import supervise as _sv
 from bot_bottle.gateway.supervisor.env_handler import handle_get_environment
+from bot_bottle.gateway.supervisor import credential_fetch
 from bot_bottle.gateway.supervisor import launch_bottle_server as _lb
 from bot_bottle.gateway.supervisor.forge_tools import FORGE_TOOL_DEFINITIONS
 
@@ -615,80 +616,17 @@ class MCPHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        if self.path.startswith("/bb-credential/"):
+        if self.path.startswith(credential_fetch.PATH_PREFIX):
             self._handle_credential_fetch()
             return
         self._write_text(405, "use POST for MCP requests\n")
 
     def _handle_credential_fetch(self) -> None:
-        """Serve a readable credential to an attributed agent.
-
-        GET /bb-credential/<label> → {"values": {field: value}, "kind": "..."}
-        Attributed by (source_ip, x-bot-bottle-identity). Fails closed.
-        """
-        label = self.path[len("/bb-credential/"):]
-        if not label:
-            self._write_json(400, {"error": "missing label"})
-            return
-        source_ip = self.client_address[0]
-        identity_token = self._identity_token()
-        orch_url = os.environ.get(ORCHESTRATOR_URL_ENV, "")
-        if not orch_url:
-            self._write_json(503, {"error": "orchestrator not configured"})
-            return
-        import urllib.error  # noqa: PLC0415 — stdlib, deferred to keep top-level clean
-        import urllib.request  # noqa: PLC0415
-        try:
-            payload = json.dumps({
-                "source_ip": source_ip,
-                "identity_token": identity_token,
-                "label": label,
-            }).encode()
-            req = urllib.request.Request(
-                f"{orch_url.rstrip('/')}/credentials/fetch",
-                data=payload,
-                headers={"Content-Type": "application/json",
-                         "Content-Length": str(len(payload))},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                result = json.loads(resp.read())
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                self._write_json(404, {"error": "credential not found or not readable"})
-            else:
-                self._write_json(503, {"error": f"orchestrator error: {e.code}"})
-            return
-        except Exception as e:  # noqa: BLE001
-            sys.stderr.write(f"bb-credential: orchestrator fetch failed: {e}\n")
-            self._write_json(503, {"error": "orchestrator unavailable"})
-            return
-        self._audit_credential_fetch(source_ip, identity_token, label, orch_url)
-        self._write_json(200, result)
-
-    def _audit_credential_fetch(
-        self, source_ip: str, identity_token: str, label: str, orch_url: str,
-    ) -> None:
-        import urllib.request  # noqa: PLC0415
-        try:
-            event = json.dumps({
-                "producer": "supervise",
-                "event": {
-                    "kind": "credential.fetched",
-                    "label": label,
-                    "src_ip": source_ip,
-                },
-            }).encode()
-            req = urllib.request.Request(
-                f"{orch_url.rstrip('/')}/audit/events",
-                data=event,
-                headers={"Content-Type": "application/json",
-                         "Content-Length": str(len(event))},
-                method="POST",
-            )
-            urllib.request.urlopen(req, timeout=2).close()
-        except Exception:  # noqa: BLE001
-            pass  # audit is best-effort; don't fail the credential serve
+        """Serve a readable credential to an attributed agent (see credential_fetch)."""
+        status, body = credential_fetch.fetch(
+            self.path, self.client_address[0], self._identity_token(),
+            os.environ.get(ORCHESTRATOR_URL_ENV, ""))
+        self._write_json(status, body)
 
     def _write_json(self, status: int, body: object) -> None:
         encoded = json.dumps(body).encode()

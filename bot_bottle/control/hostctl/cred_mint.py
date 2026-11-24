@@ -301,7 +301,40 @@ def audit_cred_entries(
             source=prov.source, principal=minted.principal)
 
 
+def push_readable_credential(bottle_id: str, label: str, values: dict[str, str]) -> None:
+    """Push an `agent_can_read` credential's (renewed) values to the orchestrator."""
+    # pylint: disable=import-outside-toplevel
+    from ..client import for_bottle
+    for_bottle(lambda client: client.push_readable_credential(bottle_id, label, values),
+               what=f"bottle {bottle_id}")
+
+
+def start_cred_block(
+    cred_renewer: Any,
+    audit: Any,
+    cred_entries: "list[CredEntry] | None",
+    plan: Any,
+    *,
+    identity: str,
+    bottle: Any,
+    activation: str,
+) -> None:
+    """After a launch: keep its minted credentials renewed, audit them, and hand
+    the `agent_can_read` ones' values to the orchestrator for `bb-credential`.
+    `plan` may be a stand-in without `readable_cred_values`."""
+    readable: Mapping[str, dict[str, str]] = getattr(plan, "readable_cred_values", {})
+    if cred_entries:
+        cred_renewer.add(identity, bottle.registry_id, bottle.env_var_secret, cred_entries,
+                         readable_labels=frozenset(readable))
+        audit_cred_entries(cred_entries, audit, identity, activation)
+    for lbl, vals in readable.items():
+        try:
+            push_readable_credential(bottle.registry_id, lbl, vals)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            log.warn(f"bottle {identity}: couldn't push readable credential {lbl!r}: {e}")
+
+
 __all__ = [
-    "CredEntry", "audit_cred_entries", "mint_cred_block",
-    "recredential", "recredential_block",
+    "CredEntry", "audit_cred_entries", "mint_cred_block", "push_readable_credential",
+    "recredential", "recredential_block", "start_cred_block",
 ]
