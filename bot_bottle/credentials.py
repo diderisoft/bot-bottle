@@ -11,14 +11,16 @@ Kind constants name what a minted credential is:
 - `aws`     — `access_key_id`, `secret_access_key`, optional `session_token`.
 - `ssh-key` — `private_key`, `public_key`: only git-gate uses it.
 
-Built-in sources: `secret`, `prompt`, `host_login`, `file` and
-`gitea_deploy_key`. `assume_role` and `profile` come in a later chunk.
+Built-in sources: `secret`, `prompt`, `host_login`, `file`,
+`gitea_deploy_key`, `assume_role`, `profile`.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
+import subprocess
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -382,12 +384,178 @@ class _GiteaDeployKeyProvider(CredentialProvider):
         return api_url, token, repo, read_only
 
 
+_AWS_CLI_TIMEOUT = 30
+
+
+class _AssumeRoleProvider(CredentialProvider):
+    """A per-bottle AWS STS AssumeRole session.
+
+    Calls the AWS CLI (`aws sts assume-role`) using the named profile or the
+    environment's default credentials. `role` is the ARN to assume.
+    Optional: `profile` (AWS profile), `duration` (e.g. `1h`; default 1h),
+    `session_policy` (a JSON file path, in `file_fields`).
+
+    The session is renewed before it expires. `retire`: sessions can't be
+    revoked; they simply expire.
+
+    `project_definable`: a narrow, expiring session is safe for projects.
+    """
+
+    source = "assume_role"
+    kinds = (KIND_AWS,)
+    project_definable = True
+    file_fields = ("session_policy",)
+
+    def mint(self, label: str, bottle_id: str,
+             settings: Mapping[str, object], secrets: SecretSource) -> MintedCredential:
+        role = str(settings.get("role", "")).strip()
+        if not role:
+            raise ValueError(f"credential {label!r}: source 'assume_role' requires 'role: ARN'")
+        profile = str(settings.get("profile", "")).strip()
+        duration_str = str(settings.get("duration", "1h")).strip()
+        duration_secs = _parse_duration_secs(duration_str, label)
+        session_policy_path = str(settings.get("session_policy", "")).strip()
+
+        session_name = f"bb-{bottle_id[:16]}-{label[:8]}"
+        cmd = ["aws", "sts", "assume-role",
+               "--role-arn", role,
+               "--role-session-name", session_name,
+               "--duration-seconds", str(duration_secs),
+               "--output", "json"]
+        if profile:
+            cmd += ["--profile", profile]
+        if session_policy_path:
+            policy_path = Path(session_policy_path).expanduser()
+            if not policy_path.is_file():
+                raise ValueError(
+                    f"credential {label!r}: session_policy file not found: {policy_path}"
+                )
+            cmd += ["--policy", policy_path.read_text()]
+        try:
+            out = subprocess.check_output(cmd, timeout=_AWS_CLI_TIMEOUT, stderr=subprocess.PIPE)
+        except FileNotFoundError as e:
+            raise ValueError(
+                f"credential {label!r}: 'aws' CLI not found; install awscli"
+            ) from e
+        except subprocess.CalledProcessError as e:
+            raise ValueError(
+                f"credential {label!r}: aws sts assume-role failed: "
+                f"{e.stderr.decode(errors='replace').strip()}"
+            ) from e
+        creds = json.loads(out)["Credentials"]
+        expires_at = datetime.fromisoformat(
+            creds["Expiration"].replace("Z", "+00:00")
+        )
+        values: dict[str, str] = {
+            "access_key_id": creds["AccessKeyId"],
+            "secret_access_key": creds["SecretAccessKey"],
+        }
+        if "SessionToken" in creds:
+            values["session_token"] = creds["SessionToken"]
+        return MintedCredential(KIND_AWS, values, expires_at,
+                                f"assume_role:{role}")
+
+    def describe(self, settings: Mapping[str, object]) -> Grant:
+        role = settings.get("role", "?")
+        profile = settings.get("profile", "")
+        duration = settings.get("duration", "1h")
+        session_policy = settings.get("session_policy", "")
+        # Extract account from ARN: arn:aws:iam::123456789012:role/name
+        parts = str(role).split(":")
+        account = parts[4] if len(parts) > 4 else "?"
+        scope = f"scoped by policy: {session_policy}" if session_policy else ""
+        return Grant(
+            acts_as=f"role {role}",
+            authority=f"AWS account {account}",
+            scope=scope,
+            lifetime=str(duration),
+            starts_from=f"AWS profile {profile!r}" if profile else "default AWS credentials",
+        )
+
+
+class _ProfileProvider(CredentialProvider):
+    """AWS credentials from a named profile on the host.
+
+    `profile: NAME` reads from `~/.aws/credentials` / `~/.aws/config` via
+    the AWS CLI. Unlike `assume_role`, no new session is created; the profile's
+    credentials (which may themselves be from SSO or a `credential_process`)
+    are read directly. `renew` re-reads the profile.
+
+    Not `project_definable`: a whole profile gives full access; use
+    `assume_role` with a narrow role instead.
+    """
+
+    source = "profile"
+    kinds = (KIND_AWS,)
+    project_definable = False
+
+    def mint(self, label: str, bottle_id: str,
+             settings: Mapping[str, object], secrets: SecretSource) -> MintedCredential:
+        profile = str(settings.get("profile", "")).strip()
+        if not profile:
+            raise ValueError(f"credential {label!r}: source 'profile' requires 'profile: NAME'")
+        cmd = ["aws", "configure", "export-credentials",
+               "--profile", profile, "--format", "process"]
+        try:
+            out = subprocess.check_output(cmd, timeout=_AWS_CLI_TIMEOUT, stderr=subprocess.PIPE)
+        except FileNotFoundError as e:
+            raise ValueError(
+                f"credential {label!r}: 'aws' CLI not found; install awscli"
+            ) from e
+        except subprocess.CalledProcessError as e:
+            raise ValueError(
+                f"credential {label!r}: aws configure export-credentials failed: "
+                f"{e.stderr.decode(errors='replace').strip()}"
+            ) from e
+        creds = json.loads(out)
+        expires_str = creds.get("Expiration", "")
+        expires_at: datetime | None = None
+        if expires_str:
+            expires_at = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
+        values: dict[str, str] = {
+            "access_key_id": creds["AccessKeyId"],
+            "secret_access_key": creds["SecretAccessKey"],
+        }
+        if "SessionToken" in creds:
+            values["session_token"] = creds["SessionToken"]
+        return MintedCredential(KIND_AWS, values, expires_at, f"profile:{profile}")
+
+    def describe(self, settings: Mapping[str, object]) -> Grant:
+        profile = settings.get("profile", "?")
+        return Grant(
+            acts_as="",
+            authority="",
+            scope="",
+            lifetime="until the profile credentials expire",
+            starts_from=f"AWS profile {profile!r}",
+        )
+
+
+def _parse_duration_secs(duration: str, label: str) -> int:
+    """Parse a duration like '1h', '30m', '3600s', or plain seconds."""
+    duration = duration.strip()
+    if duration.endswith("h"):
+        return int(duration[:-1]) * 3600
+    if duration.endswith("m"):
+        return int(duration[:-1]) * 60
+    if duration.endswith("s"):
+        return int(duration[:-1])
+    try:
+        return int(duration)
+    except ValueError:
+        raise ValueError(
+            f"credential {label!r}: invalid duration {duration!r}; use '1h', '30m', '3600s'"
+        ) from None
+
+
 _BUILTIN_PROVIDERS: tuple[CredentialProvider, ...] = (
     _SecretProvider(),
     _PromptProvider(),
     _HostLoginProvider(),
     _FileProvider(),
     _GiteaDeployKeyProvider(),
+    _AssumeRoleProvider(),
+    _ProfileProvider(),
 )
 
 

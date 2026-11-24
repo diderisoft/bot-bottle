@@ -46,8 +46,8 @@ _SOURCE_SETTINGS: dict[str, frozenset[str]] = {
     "host_login": frozenset({"harness"}),
     "file": frozenset({"path", "private_key_path", "public_key_path"}),
     "gitea_deploy_key": frozenset({"api_url", "token", "repo", "read_only"}),
-    # Remaining sources are future chunks; their settings are unchecked
-    # until then, to avoid breaking manifests written against the PRD.
+    "assume_role": frozenset({"role", "profile", "duration", "session_policy"}),
+    "profile": frozenset({"profile"}),
 }
 
 
