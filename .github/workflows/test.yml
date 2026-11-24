@@ -111,6 +111,20 @@ jobs:
       - name: Install coverage
         run: python3 -m pip install coverage
 
+      # A fresh hosted runner's Docker daemon can take longer to answer than
+      # doctor's single 5 s probe allows; wait for it before the preflight.
+      - name: Wait for the Docker daemon
+        run: |
+          for i in $(seq 1 30); do
+            if timeout 10 docker info >/dev/null 2>&1; then
+              echo "docker daemon ready after ${i} attempt(s)"; exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::docker daemon still unreachable after 90 s"
+          sudo systemctl status docker --no-pager || true
+          exit 1
+
       - name: Preflight — Docker backend is ready
         run: |
           python3 --version
