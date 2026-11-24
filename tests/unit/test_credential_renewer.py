@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import threading
 import unittest
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from unittest import mock
 
 from bot_bottle.credentials import (
@@ -13,7 +13,7 @@ from bot_bottle.credentials import (
 )
 from bot_bottle.control.hostctl.credential_renewer import (
     RENEW_BEFORE_FRACTION, MIN_RENEW_BEFORE,
-    CredentialRenewer, _renew_before,
+    CredentialRenewer, _CredEntry, _renew_before,
 )
 
 
@@ -47,7 +47,8 @@ class _FakeProvider(CredentialProvider):
             tok = next(self._tokens)
         except StopIteration:
             tok = "tok-fallback"
-        expires_at = settings.get("expires_at")  # type: ignore[assignment]
+        expires_at = settings.get("expires_at")
+        assert expires_at is None or isinstance(expires_at, datetime)
         return MintedCredential(KIND_TOKEN, {"token": tok}, expires_at, "fake")
 
     def renew(self, label: str, bottle_id: str, current: MintedCredential,
@@ -59,7 +60,8 @@ class _FakeProvider(CredentialProvider):
             tok = next(self._tokens)
         except StopIteration:
             tok = "tok-renewed"
-        expires_at = settings.get("expires_at")  # type: ignore[assignment]
+        expires_at = settings.get("expires_at")
+        assert expires_at is None or isinstance(expires_at, datetime)
         return MintedCredential(KIND_TOKEN, {"token": tok}, expires_at, "fake")
 
     def retire(self, label: str, bottle_id: str, current: MintedCredential) -> None:
@@ -69,11 +71,14 @@ class _FakeProvider(CredentialProvider):
         return Grant("", "", "", "", "fake")
 
 
-def _make_renewer(**kw: object) -> CredentialRenewer:
-    pushed: list[tuple] = []
-    push = lambda *a: pushed.append(a)
+def _make_renewer(**kw: Any) -> tuple[CredentialRenewer, list[tuple[Any, ...]]]:
+    pushed: list[tuple[Any, ...]] = []
+
+    def push(*a: Any) -> None:
+        pushed.append(a)
+
     kw.setdefault("clock", lambda: NOW)
-    return CredentialRenewer(push, **kw), pushed  # type: ignore[return-value]
+    return CredentialRenewer(push, **kw), pushed
 
 
 # ── _renew_before ──────────────────────────────────────────────────────────────
@@ -107,8 +112,7 @@ class TestRenewBefore(unittest.TestCase):
 class TestShouldRenew(unittest.TestCase):
 
     def _entry(self, issued_at: datetime, expires_at: datetime | None,
-               provider: _FakeProvider | None = None) -> object:
-        from bot_bottle.control.hostctl.credential_renewer import _CredEntry
+               provider: _FakeProvider | None = None) -> _CredEntry:
         cred = MintedCredential(KIND_TOKEN, {"token": "t"}, expires_at, "fake")
         return _CredEntry(
             label="x", cred=cred, issued_at=issued_at,
@@ -136,7 +140,6 @@ class TestShouldRenew(unittest.TestCase):
     def test_just_at_boundary(self) -> None:
         # exactly at the renew-before window → should renew
         issued = NOW - timedelta(hours=50)
-        lifetime = timedelta(hours=50)
         expires = NOW + MIN_RENEW_BEFORE
         entry = self._entry(issued, expires)
         self.assertTrue(entry.should_renew(NOW))
@@ -188,7 +191,7 @@ class TestCredentialRenewerRenewAll(unittest.TestCase):
                     [("tk", self._near_expiry_minted(), prov, {}, None, slots)])  # type: ignore[arg-type]
         renewer.renew_all()
         self.assertEqual(len(pushed), 1)
-        reg, slot, val, evsec = pushed[0]
+        reg, slot, val, _evsec = pushed[0]
         self.assertEqual(slot, "EGRESS_TOKEN_0")
         self.assertEqual(val, "new-tok")
         self.assertEqual(reg, "reg1")
@@ -243,7 +246,7 @@ class TestCredentialRenewerRenewAll(unittest.TestCase):
         self.assertEqual(slot_names, {"SLOT0", "SLOT1", "SLOT2"})
 
     def test_audit_renewed_emitted(self) -> None:
-        events: list[tuple] = []
+        events: list[tuple[Any, ...]] = []
 
         class _Audit:
             def credential_event(self, kind: str, **kw: object) -> None:
@@ -259,7 +262,7 @@ class TestCredentialRenewerRenewAll(unittest.TestCase):
         self.assertIn("credential.renewed", kinds)
 
     def test_audit_renew_failed_emitted(self) -> None:
-        events: list[tuple] = []
+        events: list[tuple[Any, ...]] = []
 
         class _Audit:
             def credential_event(self, kind: str, **kw: object) -> None:

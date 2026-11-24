@@ -45,6 +45,8 @@ from ...lib.log import die, info
 
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from ...backend import Bottle, BottlePlan
 
 
@@ -387,7 +389,7 @@ class CodexAgentProvider(AgentProvider):
         return (codex_auth_path(host_env),)
 
     def read_host_login(self, host_env: Mapping[str, str] | None = None,
-                        ) -> tuple[str, "datetime"]:
+                        ) -> tuple[str, "datetime | None"]:
         """The host's current Codex access token and its expiry."""
         token, expires_at = read_codex_host_login(host_env)
         return token, expires_at

@@ -37,6 +37,8 @@ from .claude_auth import (
 
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from ...backend import Bottle, BottlePlan
 
 
@@ -339,7 +341,7 @@ class ClaudeAgentProvider(AgentProvider):
         return (claude_auth_path(host_env),)
 
     def read_host_login(self, host_env: Mapping[str, str] | None = None,
-                        ) -> tuple[str, "datetime"]:
+                        ) -> tuple[str, "datetime | None"]:
         """The host's current Claude access token and its expiry."""
         token, expires_at = read_claude_host_login(host_env)
         return token, expires_at
