@@ -1,13 +1,15 @@
 """Unit tests for bot_bottle.credentials."""
 
+import os
 import unittest
 from datetime import datetime
 
 from bot_bottle.credentials import (
     KIND_TOKEN, KIND_AWS, KIND_SSH_KEY,
     KNOWN_KINDS, ENV_KINDS, AUTH_BEARER_KINDS, AUTH_AWS_KINDS, GIT_KEY_KINDS,
-    Grant, MintedCredential, CredentialRegistry,
-    _SecretProvider, _PromptProvider, default_registry,
+    Grant, MintedCredential, CredentialProvider, CredentialRegistry,
+    _AssumeRoleProvider, _SecretProvider, _PromptProvider, _FileProvider, _ProfileProvider,
+    _sts_assume_role, default_registry,
 )
 from bot_bottle.secret_source import MappingSecrets
 
@@ -132,6 +134,7 @@ class TestCredentialRegistry(unittest.TestCase):
         reg = CredentialRegistry(contrib_root=None)
         self.assertIsNotNone(reg.get("secret"))
         self.assertIsNotNone(reg.get("prompt"))
+        self.assertIsNotNone(reg.get("assume_role"))
 
     def test_unknown_source_returns_none(self):
         reg = CredentialRegistry(contrib_root=None)
@@ -141,6 +144,7 @@ class TestCredentialRegistry(unittest.TestCase):
         reg = CredentialRegistry(contrib_root=None)
         self.assertIn("secret", reg.known_sources())
         self.assertIn("prompt", reg.known_sources())
+        self.assertIn("assume_role", reg.known_sources())
 
     def test_default_registry_singleton(self):
         import bot_bottle.credentials as mod
@@ -149,6 +153,207 @@ class TestCredentialRegistry(unittest.TestCase):
         r2 = default_registry()
         self.assertIs(r1, r2)
         mod._default_registry = None
+
+
+_STS_XML = """\
+<AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+  <AssumeRoleResult>
+    <Credentials>
+      <AccessKeyId>ASIA_NEW</AccessKeyId>
+      <SecretAccessKey>new_secret</SecretAccessKey>
+      <SessionToken>new_token</SessionToken>
+      <Expiration>2026-01-01T12:00:00Z</Expiration>
+    </Credentials>
+  </AssumeRoleResult>
+</AssumeRoleResponse>"""
+
+_STS_ERROR_XML = """\
+<ErrorResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+  <Error>
+    <Code>AccessDenied</Code>
+    <Message>User is not authorized to assume role</Message>
+  </Error>
+</ErrorResponse>"""
+
+
+class TestStsAssumeRole(unittest.TestCase):
+    """Unit tests for the stdlib STS helper (network stubbed)."""
+
+    def _call(self, xml_response: str, status: int = 200) -> dict:
+        import io
+        import unittest.mock as mock
+        import urllib.error
+
+        if status == 200:
+            resp = mock.MagicMock()
+            resp.read.return_value = xml_response.encode()
+            resp.__enter__ = lambda s: s
+            resp.__exit__ = mock.MagicMock(return_value=False)
+            with mock.patch("urllib.request.urlopen", return_value=resp):
+                return _sts_assume_role(
+                    "AKIA", "secret", None,
+                    role_arn="arn:aws:iam::123:role/my-role",
+                    session_name="my_sess",
+                )
+        else:
+            err = urllib.error.HTTPError(
+                "https://sts.amazonaws.com/", status, "Error", {}, io.BytesIO(xml_response.encode()))
+            with mock.patch("urllib.request.urlopen", side_effect=err):
+                return _sts_assume_role(
+                    "AKIA", "secret", None,
+                    role_arn="arn:aws:iam::123:role/my-role",
+                    session_name="my_sess",
+                )
+
+    def test_happy_path_returns_credentials(self) -> None:
+        result = self._call(_STS_XML)
+        self.assertEqual("ASIA_NEW", result["access_key_id"])
+        self.assertEqual("new_secret", result["secret_access_key"])
+        self.assertEqual("new_token", result["session_token"])
+        self.assertIsNotNone(result["expires_at"])
+
+    def test_expiry_is_parsed_as_datetime(self) -> None:
+        from datetime import datetime, timezone
+        result = self._call(_STS_XML)
+        self.assertIsInstance(result["expires_at"], datetime)
+        self.assertEqual(timezone.utc, result["expires_at"].tzinfo)  # type: ignore[union-attr]
+
+    def test_http_error_raises_value_error(self) -> None:
+        with self.assertRaisesRegex(ValueError, "AccessDenied"):
+            self._call(_STS_ERROR_XML, status=403)
+
+
+class TestAssumeRoleProvider(unittest.TestCase):
+    def setUp(self) -> None:
+        self.provider = _AssumeRoleProvider()
+        self.secrets = MappingSecrets({})
+        self.base_cred = MintedCredential(
+            KIND_AWS,
+            {"access_key_id": "BASE_KEY", "secret_access_key": "BASE_SECRET"},
+            None, "base",
+        )
+
+    def _mint(self, settings: dict, minted_creds: dict | None = None,
+              sts_xml: str = _STS_XML) -> MintedCredential:
+        import unittest.mock as mock
+        resp = mock.MagicMock()
+        resp.read.return_value = sts_xml.encode()
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = mock.MagicMock(return_value=False)
+        env = {"AWS_ACCESS_KEY_ID": "ENV_KEY", "AWS_SECRET_ACCESS_KEY": "ENV_SECRET"}
+        with mock.patch("urllib.request.urlopen", return_value=resp), \
+                unittest.mock.patch.dict(os.environ, env):
+            return self.provider.mint("my-role", "b", settings, self.secrets,
+                                      minted_creds=minted_creds)
+
+    def test_mint_with_base_cred_uses_it(self) -> None:
+        import urllib.request as _ur
+        import unittest.mock as mock
+        captured: list = []
+
+        def _fake_urlopen(req, timeout=None):
+            captured.append(req)
+            resp = mock.MagicMock()
+            resp.read.return_value = _STS_XML.encode()
+            resp.__enter__ = lambda s: s
+            resp.__exit__ = mock.MagicMock(return_value=False)
+            return resp
+
+        with mock.patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            self.provider.mint(
+                "my-role", "b",
+                {"role_arn": "arn:aws:iam::123:role/my-role", "base": "@base-aws"},
+                self.secrets,
+                minted_creds={"base-aws": self.base_cred},
+            )
+        req = captured[0]
+        auth = req.get_header("Authorization")
+        self.assertIn("BASE_KEY", auth)
+
+    def test_mint_returns_aws_kind(self) -> None:
+        cred = self._mint({"role_arn": "arn:aws:iam::123:role/r"})
+        self.assertEqual(KIND_AWS, cred.kind)
+
+    def test_mint_returns_all_three_values(self) -> None:
+        cred = self._mint({"role_arn": "arn:aws:iam::123:role/r"}, sts_xml=_STS_XML)
+        self.assertEqual("ASIA_NEW", cred.values["access_key_id"])
+        self.assertEqual("new_secret", cred.values["secret_access_key"])
+        self.assertEqual("new_token", cred.values["session_token"])
+
+    def test_mint_has_expires_at(self) -> None:
+        cred = self._mint({"role_arn": "arn:aws:iam::123:role/r"})
+        self.assertIsNotNone(cred.expires_at)
+
+    def test_mint_missing_role_arn_raises(self) -> None:
+        with self.assertRaisesRegex(ValueError, "role_arn"):
+            self.provider.mint("x", "b", {}, self.secrets)
+
+    def test_mint_no_base_no_env_raises(self) -> None:
+        with unittest.mock.patch.dict(os.environ,
+                                      {"AWS_ACCESS_KEY_ID": "", "AWS_SECRET_ACCESS_KEY": ""},
+                                      clear=False):
+            with self.assertRaisesRegex(ValueError, "base"):
+                self.provider.mint("x", "b",
+                                   {"role_arn": "arn:aws:iam::123:role/r"},
+                                   self.secrets)
+
+    def test_mint_no_base_uses_env(self) -> None:
+        with unittest.mock.patch.dict(os.environ, {
+            "AWS_ACCESS_KEY_ID": "ENV_KEY",
+            "AWS_SECRET_ACCESS_KEY": "ENV_SECRET",
+        }):
+            cred = self._mint({"role_arn": "arn:aws:iam::123:role/r"})
+        self.assertEqual(KIND_AWS, cred.kind)
+
+    def test_describe(self) -> None:
+        g = self.provider.describe({"role_arn": "arn:aws:iam::123:role/my-role"})
+        self.assertEqual("my-role", g.acts_from if hasattr(g, "acts_from") else g.acts_as)
+        self.assertIn("STS", g.authority)
+        self.assertIn("hour", g.lifetime)
+
+    def test_source_name(self) -> None:
+        self.assertEqual("assume_role", self.provider.source)
+
+    def test_project_definable(self) -> None:
+        self.assertTrue(self.provider.project_definable)
+
+    def test_kind_is_aws(self) -> None:
+        self.assertEqual((KIND_AWS,), self.provider.kinds)
+
+
+class TestTopoSort(unittest.TestCase):
+    def _sort(self, creds: dict) -> list:
+        from bot_bottle.control.hostctl.cred_mint import _topo_sort
+        return _topo_sort(creds)
+
+    def test_no_deps_preserves_any_order(self) -> None:
+        result = self._sort({"a": {}, "b": {}, "c": {}})
+        self.assertEqual({"a", "b", "c"}, set(result))
+
+    def test_dep_comes_before_dependent(self) -> None:
+        result = self._sort({
+            "role": {"base": "@base-aws", "role_arn": "arn:..."},
+            "base-aws": {"access_key_id": "X"},
+        })
+        self.assertLess(result.index("base-aws"), result.index("role"))
+
+    def test_chain(self) -> None:
+        result = self._sort({
+            "c": {"base": "@b"},
+            "b": {"base": "@a"},
+            "a": {},
+        })
+        self.assertLess(result.index("a"), result.index("b"))
+        self.assertLess(result.index("b"), result.index("c"))
+
+    def test_external_ref_ignored(self) -> None:
+        # @ghost not in the dict — should not crash
+        result = self._sort({"a": {"base": "@ghost"}})
+        self.assertEqual(["a"], result)
+
+    def test_non_cred_ref_sigils_ignored(self) -> None:
+        result = self._sort({"a": {"token": "secret:MY_TOKEN", "msg": "?ask me"}})
+        self.assertEqual(["a"], result)
 
 
 if __name__ == "__main__":

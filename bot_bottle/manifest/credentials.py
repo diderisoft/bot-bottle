@@ -43,8 +43,9 @@ _SOURCE_SETTINGS: dict[str, frozenset[str]] = {
     "host_login": frozenset({"harness"}),
     "file": frozenset({"path", "private_key_path", "public_key_path"}),
     "gitea_deploy_key": frozenset({"api_url", "token", "repo", "read_only"}),
-    "assume_role": frozenset({"role", "profile", "duration", "session_policy"}),
     "profile": frozenset({"profile"}),
+    "assume_role": frozenset({"role_arn", "base", "session_name",
+                              "duration_seconds", "external_id", "region"}),
 }
 
 
@@ -165,9 +166,12 @@ class ManifestCredential:
         elif source == "file":
             _check_file_settings(ctx, kind, settings)
         else:
-            # Any string setting of another source may be a value form
-            # (`@label`, `secret:NAME`, `${VAR}`, ...); refuse malformed ones.
-            settings = as_value_dict(settings, ctx)
+            # For non-secret sources, validate every string value as a valid
+            # sigil expression (secret:NAME, ${VAR}, ?message, @label, literal).
+            # source:secret is exempt — its values are always bare secret names.
+            settings = dict(as_value_dict(settings, ctx))
+            if source == "assume_role":
+                _check_assume_role_settings(ctx, settings)
 
         # Keep the resolved kind in the settings, so `provider.mint()` (at
         # launch and when a re-adopted bottle is re-minted) receives it even
@@ -317,6 +321,20 @@ def _check_cycles(bottle: str, graph: Mapping[str, frozenset[str]]) -> None:
 
     for node in sorted(graph):
         dfs(node, [])
+
+
+def _check_assume_role_settings(ctx: str, settings: Mapping[str, object]) -> None:
+    role_arn = settings.get("role_arn")
+    if not isinstance(role_arn, str) or not role_arn:
+        raise ManifestError(
+            f"{ctx}: source 'assume_role' requires 'role_arn: arn:aws:iam::ACCOUNT:role/NAME'"
+        )
+    base = settings.get("base")
+    if base is not None and not sigil_ref.is_cred_ref(str(base)):
+        raise ManifestError(
+            f"{ctx}: 'base' must be an @label credential reference (e.g. 'base: @my-aws'), "
+            f"got {base!r}"
+        )
 
 
 def _check_file_settings(ctx: str, kind: str, settings: Mapping[str, object]) -> None:

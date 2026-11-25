@@ -96,13 +96,22 @@ class CredentialProvider(ABC):
 
     @abstractmethod
     def mint(self, label: str, bottle_id: str,
-             settings: Mapping[str, object], secrets: SecretSource) -> MintedCredential:
-        """Make a fresh credential. Raise on failure."""
+             settings: Mapping[str, object], secrets: SecretSource,
+             *, minted_creds: Mapping[str, "MintedCredential"] | None = None,
+             ) -> MintedCredential:
+        """Make a fresh credential. Raise on failure.
+
+        `minted_creds` holds credentials already minted earlier in the same
+        launch pass, keyed by label. Providers that depend on another credential
+        via `@label` read the base credential from here.
+        """
 
     def renew(self, label: str, bottle_id: str, current: MintedCredential,
-              settings: Mapping[str, object], secrets: SecretSource) -> MintedCredential:
+              settings: Mapping[str, object], secrets: SecretSource,
+              *, minted_creds: Mapping[str, "MintedCredential"] | None = None,
+              ) -> MintedCredential:
         """Refresh `current`. Default: mint again."""
-        return self.mint(label, bottle_id, settings, secrets)
+        return self.mint(label, bottle_id, settings, secrets, minted_creds=minted_creds)
 
     def retire(self, label: str, bottle_id: str, current: MintedCredential) -> None:
         """Revoke or clean up `current`. Default: nothing."""
@@ -128,7 +137,9 @@ class _SecretProvider(CredentialProvider):
     project_definable = True
 
     def mint(self, label: str, bottle_id: str,
-             settings: Mapping[str, object], secrets: SecretSource) -> MintedCredential:
+             settings: Mapping[str, object], secrets: SecretSource,
+             *, minted_creds: Mapping[str, MintedCredential] | None = None,
+             ) -> MintedCredential:
         kind = str(settings.get("kind", KIND_TOKEN))
         if kind == KIND_TOKEN:
             name = settings.get("secret")
@@ -190,7 +201,9 @@ class _PromptProvider(CredentialProvider):
     project_definable = True
 
     def mint(self, label: str, bottle_id: str,
-             settings: Mapping[str, object], secrets: SecretSource) -> MintedCredential:
+             settings: Mapping[str, object], secrets: SecretSource,
+             *, minted_creds: Mapping[str, MintedCredential] | None = None,
+             ) -> MintedCredential:
         message = str(settings.get("message", label))
         # The actual value is collected at launch from the user; the host
         # controller looks it up from the launch answers by label+message.
@@ -221,7 +234,9 @@ class _HostLoginProvider(CredentialProvider):
     project_definable = False
 
     def mint(self, label: str, bottle_id: str,
-             settings: Mapping[str, object], secrets: SecretSource) -> MintedCredential:
+             settings: Mapping[str, object], secrets: SecretSource,
+             *, minted_creds: Mapping[str, MintedCredential] | None = None,
+             ) -> MintedCredential:
         harness = str(settings.get("harness", ""))
         if not harness:
             raise ValueError(f"credential {label!r}: source 'host_login' requires 'harness: NAME'")
@@ -273,7 +288,9 @@ class _FileProvider(CredentialProvider):
     file_fields: ClassVar[tuple[str, ...]] = ("path", "private_key_path", "public_key_path")
 
     def mint(self, label: str, bottle_id: str,
-             settings: Mapping[str, object], secrets: SecretSource) -> MintedCredential:
+             settings: Mapping[str, object], secrets: SecretSource,
+             *, minted_creds: Mapping[str, MintedCredential] | None = None,
+             ) -> MintedCredential:
         kind = str(settings.get("kind", KIND_SSH_KEY))
         if kind == KIND_TOKEN:
             path = _required_file(label, settings, "path", "kind 'token'")
@@ -387,92 +404,6 @@ class _GiteaDeployKeyProvider(CredentialProvider):
 _AWS_CLI_TIMEOUT = 30
 
 
-class _AssumeRoleProvider(CredentialProvider):
-    """A per-bottle AWS STS AssumeRole session.
-
-    Calls the AWS CLI (`aws sts assume-role`) using the named profile or the
-    environment's default credentials. `role` is the ARN to assume.
-    Optional: `profile` (AWS profile), `duration` (e.g. `1h`; default 1h),
-    `session_policy` (a JSON file path, in `file_fields`).
-
-    The session is renewed before it expires. `retire`: sessions can't be
-    revoked; they simply expire.
-
-    `project_definable`: a narrow, expiring session is safe for projects.
-    """
-
-    source = "assume_role"
-    kinds = (KIND_AWS,)
-    project_definable = True
-    file_fields = ("session_policy",)
-
-    def mint(self, label: str, bottle_id: str,
-             settings: Mapping[str, object], secrets: SecretSource) -> MintedCredential:
-        role = str(settings.get("role", "")).strip()
-        if not role:
-            raise ValueError(f"credential {label!r}: source 'assume_role' requires 'role: ARN'")
-        profile = str(settings.get("profile", "")).strip()
-        duration_str = str(settings.get("duration", "1h")).strip()
-        duration_secs = _parse_duration_secs(duration_str, label)
-        session_policy_path = str(settings.get("session_policy", "")).strip()
-
-        session_name = f"bb-{bottle_id[:16]}-{label[:8]}"
-        cmd = ["aws", "sts", "assume-role",
-               "--role-arn", role,
-               "--role-session-name", session_name,
-               "--duration-seconds", str(duration_secs),
-               "--output", "json"]
-        if profile:
-            cmd += ["--profile", profile]
-        if session_policy_path:
-            policy_path = Path(session_policy_path).expanduser()
-            if not policy_path.is_file():
-                raise ValueError(
-                    f"credential {label!r}: session_policy file not found: {policy_path}"
-                )
-            cmd += ["--policy", policy_path.read_text()]
-        try:
-            out = subprocess.check_output(cmd, timeout=_AWS_CLI_TIMEOUT, stderr=subprocess.PIPE)
-        except FileNotFoundError as e:
-            raise ValueError(
-                f"credential {label!r}: 'aws' CLI not found; install awscli"
-            ) from e
-        except subprocess.CalledProcessError as e:
-            raise ValueError(
-                f"credential {label!r}: aws sts assume-role failed: "
-                f"{e.stderr.decode(errors='replace').strip()}"
-            ) from e
-        creds = json.loads(out)["Credentials"]
-        expires_at = datetime.fromisoformat(
-            creds["Expiration"].replace("Z", "+00:00")
-        )
-        values: dict[str, str] = {
-            "access_key_id": creds["AccessKeyId"],
-            "secret_access_key": creds["SecretAccessKey"],
-        }
-        if "SessionToken" in creds:
-            values["session_token"] = creds["SessionToken"]
-        return MintedCredential(KIND_AWS, values, expires_at,
-                                f"assume_role:{role}")
-
-    def describe(self, settings: Mapping[str, object]) -> Grant:
-        role = settings.get("role", "?")
-        profile = settings.get("profile", "")
-        duration = settings.get("duration", "1h")
-        session_policy = settings.get("session_policy", "")
-        # Extract account from ARN: arn:aws:iam::123456789012:role/name
-        parts = str(role).split(":")
-        account = parts[4] if len(parts) > 4 else "?"
-        scope = f"scoped by policy: {session_policy}" if session_policy else ""
-        return Grant(
-            acts_as=f"role {role}",
-            authority=f"AWS account {account}",
-            scope=scope,
-            lifetime=str(duration),
-            starts_from=f"AWS profile {profile!r}" if profile else "default AWS credentials",
-        )
-
-
 class _ProfileProvider(CredentialProvider):
     """AWS credentials from a named profile on the host.
 
@@ -490,7 +421,9 @@ class _ProfileProvider(CredentialProvider):
     project_definable = False
 
     def mint(self, label: str, bottle_id: str,
-             settings: Mapping[str, object], secrets: SecretSource) -> MintedCredential:
+             settings: Mapping[str, object], secrets: SecretSource,
+             *, minted_creds: Mapping[str, MintedCredential] | None = None,
+             ) -> MintedCredential:
         profile = str(settings.get("profile", "")).strip()
         if not profile:
             raise ValueError(f"credential {label!r}: source 'profile' requires 'profile: NAME'")
@@ -548,6 +481,217 @@ def _parse_duration_secs(duration: str, label: str) -> int:
         ) from None
 
 
+def _sts_assume_role(
+    access_key_id: str,
+    secret_access_key: str,
+    session_token: str | None,
+    *,
+    role_arn: str,
+    session_name: str,
+    duration_seconds: int = 3600,
+    external_id: str | None = None,
+    region: str = "us-east-1",
+) -> dict[str, object]:
+    """Call AWS STS AssumeRole using stdlib only (no boto3 required).
+
+    Returns a dict with keys: access_key_id, secret_access_key, session_token,
+    expires_at (datetime). Raises ValueError on API errors.
+    """
+    import hashlib  # pylint: disable=import-outside-toplevel
+    import hmac  # pylint: disable=import-outside-toplevel
+    import urllib.error  # pylint: disable=import-outside-toplevel
+    import urllib.parse  # pylint: disable=import-outside-toplevel
+    import urllib.request  # pylint: disable=import-outside-toplevel
+    import xml.etree.ElementTree as ET  # pylint: disable=import-outside-toplevel
+    from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
+
+    now = datetime.now(timezone.utc)
+    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+    date_stamp = now.strftime("%Y%m%d")
+    host = "sts.amazonaws.com" if region == "us-east-1" else f"sts.{region}.amazonaws.com"
+
+    params: dict[str, str] = {
+        "Action": "AssumeRole",
+        "DurationSeconds": str(duration_seconds),
+        "RoleArn": role_arn,
+        "RoleSessionName": session_name,
+        "Version": "2011-06-15",
+    }
+    if external_id:
+        params["ExternalId"] = external_id
+    body = urllib.parse.urlencode(sorted(params.items()))
+    payload_hash = hashlib.sha256(body.encode()).hexdigest()
+
+    # Build canonical headers sorted by name; host must be included for signing
+    # but NOT passed to urllib.request (it adds Host itself).
+    sign_hdrs: list[tuple[str, str]] = [
+        ("content-type", "application/x-www-form-urlencoded"),
+        ("host", host),
+        ("x-amz-date", amz_date),
+    ]
+    if session_token:
+        sign_hdrs.append(("x-amz-security-token", session_token))
+    sign_hdrs.sort()
+
+    canonical_headers = "".join(f"{k}:{v}\n" for k, v in sign_hdrs)
+    signed_headers = ";".join(k for k, _ in sign_hdrs)
+
+    canonical_request = "\n".join([
+        "POST", "/", "",
+        canonical_headers,
+        signed_headers,
+        payload_hash,
+    ])
+
+    credential_scope = f"{date_stamp}/{region}/sts/aws4_request"
+    string_to_sign = "\n".join([
+        "AWS4-HMAC-SHA256",
+        amz_date,
+        credential_scope,
+        hashlib.sha256(canonical_request.encode()).hexdigest(),
+    ])
+
+    def _sign(key: bytes, msg: str) -> bytes:
+        return hmac.new(key, msg.encode(), hashlib.sha256).digest()
+
+    sk = _sign(_sign(_sign(_sign(
+        f"AWS4{secret_access_key}".encode(),
+        date_stamp), region), "sts"), "aws4_request")
+    signature = hmac.new(sk, string_to_sign.encode(), hashlib.sha256).hexdigest()
+
+    auth = (
+        f"AWS4-HMAC-SHA256 Credential={access_key_id}/{credential_scope}, "
+        f"SignedHeaders={signed_headers}, Signature={signature}"
+    )
+    http_headers = {k.title(): v for k, v in sign_hdrs if k != "host"}
+    http_headers["Authorization"] = auth
+
+    req = urllib.request.Request(
+        f"https://{host}/",
+        data=body.encode(),
+        headers=http_headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            xml_bytes = resp.read()
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        try:
+            root = ET.fromstring(raw)
+            ns = "https://sts.amazonaws.com/doc/2011-06-15/"
+            code = root.findtext(f".//{{{ns}}}Code") or "Unknown"
+            msg = root.findtext(f".//{{{ns}}}Message") or str(exc)
+        except ET.ParseError:
+            code, msg = "Unknown", str(exc)
+        raise ValueError(f"STS AssumeRole: {code}: {msg}") from exc
+
+    root = ET.fromstring(xml_bytes)
+    ns = "https://sts.amazonaws.com/doc/2011-06-15/"
+    creds_el = root.find(f".//{{{ns}}}Credentials")
+    if creds_el is None:
+        raise ValueError("STS AssumeRole: no Credentials in response")
+
+    def _t(tag: str) -> str:
+        el = creds_el.find(f"{{{ns}}}{tag}")
+        return el.text or "" if el is not None else ""
+
+    expires_str = _t("Expiration")
+    expires_at: datetime | None = None
+    if expires_str:
+        expires_at = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
+
+    return {
+        "access_key_id": _t("AccessKeyId"),
+        "secret_access_key": _t("SecretAccessKey"),
+        "session_token": _t("SessionToken"),
+        "expires_at": expires_at,
+    }
+
+
+class _AssumeRoleProvider(CredentialProvider):
+    """Assumes an AWS IAM role, minting temporary credentials via STS AssumeRole.
+
+    Required settings:
+      role_arn: arn:aws:iam::123456789012:role/my-role
+
+    Optional settings:
+      base: @my-aws          — @label ref to an aws credential to use as the caller;
+                               if absent, falls back to AWS_* environment variables.
+      session_name: my-sess  — STS session name (default: the credential label).
+      duration_seconds: 3600 — session lifetime in seconds (default 3600, max 43200).
+      external_id: ...       — STS ExternalId condition key.
+      region: us-east-1      — STS regional endpoint (default: global us-east-1).
+    """
+
+    source = "assume_role"
+    kinds = (KIND_AWS,)
+    project_definable = True
+
+    def mint(self, label: str, bottle_id: str,
+             settings: Mapping[str, object], secrets: SecretSource,
+             *, minted_creds: Mapping[str, MintedCredential] | None = None,
+             ) -> MintedCredential:
+        import os  # pylint: disable=import-outside-toplevel
+        from . import sigil_ref  # pylint: disable=import-outside-toplevel
+
+        role_arn = str(settings.get("role_arn", ""))
+        if not role_arn:
+            raise ValueError(f"credential {label!r}: source 'assume_role' requires 'role_arn'")
+
+        session_name = str(settings.get("session_name", "") or label).replace("-", "_")
+        duration = int(settings.get("duration_seconds", 3600) or 3600)
+        external_id = settings.get("external_id")
+        region = str(settings.get("region", "us-east-1") or "us-east-1")
+
+        # Resolve the base AWS credential.
+        base_ref = str(settings.get("base", "") or "")
+        base_label = sigil_ref.cred_label(base_ref) if base_ref else ""
+        base = (minted_creds or {}).get(base_label) if base_label else None
+
+        if base is not None:
+            access_key_id = str(base.values.get("access_key_id", ""))
+            secret_access_key = str(base.values.get("secret_access_key", ""))
+            session_token: str | None = base.values.get("session_token") or None  # type: ignore[assignment]
+        else:
+            access_key_id = os.environ.get("AWS_ACCESS_KEY_ID", "")
+            secret_access_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+            session_token = os.environ.get("AWS_SESSION_TOKEN") or None
+            if not access_key_id or not secret_access_key:
+                raise ValueError(
+                    f"credential {label!r}: source 'assume_role' needs a 'base: @label' "
+                    f"pointing to an aws credential, or AWS_ACCESS_KEY_ID / "
+                    f"AWS_SECRET_ACCESS_KEY in the environment"
+                )
+
+        result = _sts_assume_role(
+            access_key_id, secret_access_key, session_token,
+            role_arn=role_arn,
+            session_name=session_name,
+            duration_seconds=duration,
+            external_id=str(external_id) if external_id else None,
+            region=region,
+        )
+        values = {
+            "access_key_id": str(result["access_key_id"]),
+            "secret_access_key": str(result["secret_access_key"]),
+            "session_token": str(result["session_token"]),
+        }
+        return MintedCredential(KIND_AWS, values, result["expires_at"],  # type: ignore[arg-type]
+                                f"assume_role:{role_arn}")
+
+    def describe(self, settings: Mapping[str, object]) -> Grant:
+        role_arn = str(settings.get("role_arn", "?"))
+        role_name = role_arn.split("/")[-1] if "/" in role_arn else role_arn
+        return Grant(
+            acts_as=role_name,
+            authority="AWS STS",
+            scope="",
+            lifetime="~1 hour (renewed before expiry)",
+            starts_from=f"assume_role {role_arn}",
+        )
+
+
 _BUILTIN_PROVIDERS: tuple[CredentialProvider, ...] = (
     _SecretProvider(),
     _PromptProvider(),
@@ -556,6 +700,7 @@ _BUILTIN_PROVIDERS: tuple[CredentialProvider, ...] = (
     _GiteaDeployKeyProvider(),
     _AssumeRoleProvider(),
     _ProfileProvider(),
+    _AssumeRoleProvider(),
 )
 
 
@@ -624,4 +769,6 @@ __all__ = [
     "CredentialProvider", "CredentialRegistry",
     "Grant", "KIND_AWS", "KIND_SSH_KEY", "KIND_TOKEN", "KIND_FIELDS",
     "KNOWN_KINDS", "MintedCredential", "default_registry",
+    "_AssumeRoleProvider", "_FileProvider", "_ProfileProvider",
+    "_sts_assume_role",
 ]
