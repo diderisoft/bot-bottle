@@ -92,7 +92,8 @@ class _FakeMintProvider(CredentialProvider):
 
     def mint(self, label: str, bottle_id: str,
              settings: Mapping[str, object], secrets: object,
-             *, minted_creds=None) -> MintedCredential:
+             *, minted_creds: Mapping[str, MintedCredential] | None = None,
+             ) -> MintedCredential:
         self.mint_calls.append((label, bottle_id, settings))
         return MintedCredential(KIND_TOKEN, {"token": self._token}, self._expires_at,
                                 f"fake:{label}")
@@ -109,7 +110,8 @@ class _FailingProvider(CredentialProvider):
 
     def mint(self, label: str, bottle_id: str,
              settings: Mapping[str, object], secrets: object,
-             *, minted_creds=None) -> MintedCredential:
+             *, minted_creds: Mapping[str, MintedCredential] | None = None,
+             ) -> MintedCredential:
         raise ValueError("simulated mint failure")
 
     def describe(self, settings: Mapping[str, object]) -> Grant:
@@ -773,7 +775,8 @@ class _TrackingProvider(CredentialProvider):
 
     def mint(self, label: str, bottle_id: str,
              settings: Mapping[str, object], secrets: object,
-             *, minted_creds=None) -> MintedCredential:
+             *, minted_creds: Mapping[str, MintedCredential] | None = None,
+             ) -> MintedCredential:
         self.received[label] = dict(settings)
         tok = "first-token" if label == "first" else "second-tok"
         return MintedCredential(KIND_TOKEN, {"token": tok}, None, label)

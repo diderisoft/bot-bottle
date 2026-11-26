@@ -346,7 +346,10 @@ class _GiteaDeployKeyProvider(CredentialProvider):
     project_definable = True
 
     def mint(self, label: str, bottle_id: str,
-             settings: Mapping[str, object], secrets: SecretSource) -> MintedCredential:
+             settings: Mapping[str, object], secrets: SecretSource,
+             *, minted_creds: Mapping[str, MintedCredential] | None = None,
+             ) -> MintedCredential:
+        del minted_creds  # a deploy key depends on no other credential
         api_url, token, repo, read_only = self._required(label, settings)
         from .deploy_key_provisioner import get_provisioner  # pylint: disable=import-outside-toplevel
         title = f"bot-bottle:{bottle_id}:{label}"
@@ -462,23 +465,6 @@ class _ProfileProvider(CredentialProvider):
             lifetime="until the profile credentials expire",
             starts_from=f"AWS profile {profile!r}",
         )
-
-
-def _parse_duration_secs(duration: str, label: str) -> int:
-    """Parse a duration like '1h', '30m', '3600s', or plain seconds."""
-    duration = duration.strip()
-    if duration.endswith("h"):
-        return int(duration[:-1]) * 3600
-    if duration.endswith("m"):
-        return int(duration[:-1]) * 60
-    if duration.endswith("s"):
-        return int(duration[:-1])
-    try:
-        return int(duration)
-    except ValueError:
-        raise ValueError(
-            f"credential {label!r}: invalid duration {duration!r}; use '1h', '30m', '3600s'"
-        ) from None
 
 
 def _sts_assume_role(
@@ -640,7 +626,7 @@ class _AssumeRoleProvider(CredentialProvider):
             raise ValueError(f"credential {label!r}: source 'assume_role' requires 'role_arn'")
 
         session_name = str(settings.get("session_name", "") or label).replace("-", "_")
-        duration = int(settings.get("duration_seconds", 3600) or 3600)
+        duration = int(str(settings.get("duration_seconds") or 3600))
         external_id = settings.get("external_id")
         region = str(settings.get("region", "us-east-1") or "us-east-1")
 
@@ -700,7 +686,6 @@ _BUILTIN_PROVIDERS: tuple[CredentialProvider, ...] = (
     _GiteaDeployKeyProvider(),
     _AssumeRoleProvider(),
     _ProfileProvider(),
-    _AssumeRoleProvider(),
 )
 
 
