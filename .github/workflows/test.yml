@@ -1,4 +1,4 @@
-# GitHub-hosted port of .gitea/workflows/test.yml: the unit suite, the Docker
+# The required gate, on GitHub-hosted runners: the unit suite, the Docker
 # integration suite, combined coverage with the critical-modules and
 # diff-coverage gates, and the image-input builds. See docs/reference/ci.md.
 #

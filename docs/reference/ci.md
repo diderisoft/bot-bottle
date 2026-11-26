@@ -2,15 +2,14 @@
 
 | Workflow | Runs on | When | For |
 |---|---|---|---|
-| [`.gitea/workflows/test.yml`](../../.gitea/workflows/test.yml) | Gitea | pull requests and `main`, when tested package or build inputs change | the required gate |
-| [`.github/workflows/`](../../.github/workflows/) | GitHub-hosted runners | `push` (any branch) and `pull_request`, filtered by the same paths | a mirror of the required gate |
+| [`.github/workflows/`](../../.github/workflows/) | GitHub-hosted runners | `push` (any branch) and `pull_request`, when tested package or build inputs change | the required gate, and lint |
 | [`.gitea/workflows/pre-release-test.yml`](../../.gitea/workflows/pre-release-test.yml) | Gitea, plus self-hosted `kvm` and `macos` runners | manual dispatch before a release | the privileged matrix, then the release |
 | [`.gitea/workflows/canaries.yml`](../../.gitea/workflows/canaries.yml) | Gitea | weekly and on manual dispatch | checking the pinned gitleaks release |
 
 ## Required pull-request gate
 
-[`.gitea/workflows/test.yml`](../../.gitea/workflows/test.yml) runs these
-when tested package or build inputs change, on a pull request or on `main`:
+[`.github/workflows/test.yml`](../../.github/workflows/test.yml) runs these
+when tested package or build inputs change, on a pull request or a push:
 
 - the unit suite
 - the Docker integration suite
@@ -43,7 +42,8 @@ gates are enforced, with thresholds per
 
 ### Details: the Docker job on Gitea
 
-The job preflights the backend before test discovery.
+This is the pre-release matrix's Docker job; the required gate's runs on
+GitHub (below). The job preflights the backend before test discovery.
 
 Gitea's `act_runner` runs the job in a container with the host Docker socket.
 So the test process:
@@ -56,8 +56,8 @@ The orchestrator runs the package baked into the image built from the
 checkout. It does not bind the job container's invisible workspace into a
 sibling container.
 
-Docker integration jobs share fixed singleton names. Required and manual runs
-therefore use one non-cancelling concurrency group.
+Docker integration jobs share fixed singleton names. Runs therefore use one
+non-cancelling concurrency group.
 
 The shared gateway network and each agent's own network have explicit
 subnets. Docker requires them for the pinned source IPs used as the isolation
@@ -65,19 +65,19 @@ and attribution key.
 
 ## GitHub Actions (hosted runners only)
 
-[`.github/workflows/`](../../.github/workflows/) mirrors the required gate on
-GitHub-hosted `ubuntu-latest` runners. Gitea stays the primary CI.
+[`.github/workflows/`](../../.github/workflows/) runs the required gate and
+lint on GitHub-hosted `ubuntu-latest` runners. Gitea runs neither: it
+receives `main` from GitHub (see below).
 
 | Workflow | Runs |
 |---|---|
 | [`test.yml`](../../.github/workflows/test.yml) | unit, Docker integration (the same 25-executed, no-skip gate), image-input builds, and combined coverage with the critical-modules and diff-coverage gates |
 | [`lint.yml`](../../.github/workflows/lint.yml) | image-input and published-artifacts checks, pylint (score >= 8.0), and strict pyright |
 
-Both run on `push` (any branch) and `pull_request`. They filter by the same
-paths as their Gitea counterparts and use Python 3.13 via
-`actions/setup-python`.
+Both run on `push` (any branch) and `pull_request`, filtered by the tested
+paths, and use Python 3.13 via `actions/setup-python`.
 
-How the Docker job differs from Gitea's:
+How the Docker job differs from the pre-release matrix's on Gitea:
 
 - It runs directly on the runner VM that owns the Docker daemon. It needs
   none of the `act_runner` client-network or named-volume overrides.
@@ -99,9 +99,11 @@ are never registered with GitHub.
 
 These run only on Gitea:
 
+- [`sync-from-github.yml`](../../.gitea/workflows/sync-from-github.yml), which
+  copies `main` and tags here from GitHub every five minutes
 - the pre-release matrix
 - canaries
-- the tracker-policy and PRD-number workflows
+- the tracker-policy issue workflow
 - the image publish, refresh and prune workflows
 
 ## Privileged pre-release matrix
