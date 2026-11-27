@@ -8,6 +8,7 @@ either side are expected to diverge the implementations."""
 
 from __future__ import annotations
 
+import os
 import json
 import tempfile
 import unittest
@@ -165,6 +166,15 @@ class TestClaudeProvisionPrompt(unittest.TestCase):
         )
 
 
+_real_isdir = os.path.isdir
+
+
+def _isdir_except_skills(path: "str | os.PathLike[str]") -> bool:
+    # `os.path` is shared: only the host's skill dirs are missing here, so
+    # pathlib (which calls it on Python 3.14) still sees real directories.
+    return False if str(path).startswith("/host/skills/") else _real_isdir(path)
+
+
 class TestClaudeProvisionSkills(unittest.TestCase):
     def test_noop_when_agent_has_no_skills(self):
         bottle = _make_bottle()
@@ -208,7 +218,7 @@ class TestClaudeProvisionSkills(unittest.TestCase):
             side_effect=lambda n: f"/host/skills/{n}",  # type: ignore
         ), patch(
             "bot_bottle.contrib.claude.agent_provider.os.path.isdir",
-            return_value=False,
+            side_effect=_isdir_except_skills,
         ):
             with self.assertRaises(SystemExit):
                 ClaudeAgentProvider().provision_skills(

@@ -188,20 +188,20 @@ class TestCleanupRemoval(unittest.TestCase):
         rmtree.assert_not_called()
 
     def test_pidfd_prevents_pid_reuse_from_signalling_unrelated_process(self):
-        with patch.object(fc_cleanup.os, "pidfd_open", return_value=7), \
+        with patch.object(fc_cleanup.os, "pidfd_open", return_value=7, create=True), \
              patch.object(
                  fc_cleanup.Path, "read_bytes",
                  return_value=b"/usr/bin/python\0worker.py\0",
-             ), patch.object(fc_cleanup.signal, "pidfd_send_signal") as send, \
+             ), patch.object(fc_cleanup.signal, "pidfd_send_signal", create=True) as send, \
              patch.object(fc_cleanup.os, "close"):
             fc_cleanup._terminate_orphan(101, Path("/run"))
         send.assert_not_called()
 
     def test_pidfd_signals_revalidated_orphan(self):
         command = b"firecracker\0--config-file\0/run/gone/config.json\0"
-        with patch.object(fc_cleanup.os, "pidfd_open", return_value=7), \
+        with patch.object(fc_cleanup.os, "pidfd_open", return_value=7, create=True), \
              patch.object(fc_cleanup.Path, "read_bytes", return_value=command), \
-             patch.object(fc_cleanup.signal, "pidfd_send_signal") as send, \
+             patch.object(fc_cleanup.signal, "pidfd_send_signal", create=True) as send, \
              patch.object(fc_cleanup.os, "close"), patch.object(fc_cleanup, "info"):
             fc_cleanup._terminate_orphan(101, Path("/run"))
         send.assert_called_once_with(7, fc_cleanup.signal.SIGTERM)

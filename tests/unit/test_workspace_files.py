@@ -9,6 +9,7 @@ import io
 import os
 import subprocess
 import tempfile
+import sys
 import unittest
 from pathlib import Path
 from typing import Any
@@ -95,6 +96,8 @@ class TestReadImage(unittest.TestCase):
         (self.root / "fits.png").write_bytes(b"x" * 100)
         self.assertEqual(100, self.read("fits.png", limit=100)["size"])
 
+    @unittest.skipUnless(sys.platform.startswith("linux"),
+                         "GNU readlink -f, as in the Linux guest the script runs in")
     def test_missing(self) -> None:
         with self.assertRaisesRegex(WorkspaceFileError, "no such file"):
             self.read("nope.png")

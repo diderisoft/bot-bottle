@@ -834,7 +834,9 @@ class TestDockerOrchestratorPorts(_TmpHome):
         from bot_bottle.control import client
         from bot_bottle.contract.hostctl import Settings  # pylint: disable=import-outside-toplevel
         with self._env(), mock.patch.object(netpool, "from_settings",
-                                            side_effect=RuntimeError("no fc")):
+                                            side_effect=RuntimeError("no fc")), \
+                mock.patch("bot_bottle.backend.macos_container.infra.probe_orchestrator_url",
+                           return_value=""):
             found, _ = client._candidates(Settings())  # pylint: disable=protected-access
             self.assertFalse(any(":8099" in c.url for c in found))
             # pylint: disable-next=import-outside-toplevel
