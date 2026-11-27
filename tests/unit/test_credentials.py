@@ -1,14 +1,17 @@
 """Unit tests for bot_bottle.credentials."""
 
+import email.message
 import os
 import unittest
+import unittest.mock
 from datetime import datetime
+from typing import Any
 
 from bot_bottle.credentials import (
     KIND_TOKEN, KIND_AWS, KIND_SSH_KEY,
     KNOWN_KINDS, ENV_KINDS, AUTH_BEARER_KINDS, AUTH_AWS_KINDS, GIT_KEY_KINDS,
-    Grant, MintedCredential, CredentialProvider, CredentialRegistry,
-    _AssumeRoleProvider, _SecretProvider, _PromptProvider, _FileProvider, _ProfileProvider,
+    Grant, MintedCredential, CredentialRegistry,
+    _AssumeRoleProvider, _SecretProvider, _PromptProvider,
     _sts_assume_role, default_registry,
 )
 from bot_bottle.secret_source import MappingSecrets
@@ -179,7 +182,7 @@ _STS_ERROR_XML = """\
 class TestStsAssumeRole(unittest.TestCase):
     """Unit tests for the stdlib STS helper (network stubbed)."""
 
-    def _call(self, xml_response: str, status: int = 200) -> dict:
+    def _call(self, xml_response: str, status: int = 200) -> dict[str, object]:
         import io
         import unittest.mock as mock
         import urllib.error
@@ -187,8 +190,8 @@ class TestStsAssumeRole(unittest.TestCase):
         if status == 200:
             resp = mock.MagicMock()
             resp.read.return_value = xml_response.encode()
-            resp.__enter__ = lambda s: s
-            resp.__exit__ = mock.MagicMock(return_value=False)
+            resp.__enter__.return_value = resp
+            resp.__exit__.return_value = False
             with mock.patch("urllib.request.urlopen", return_value=resp):
                 return _sts_assume_role(
                     "AKIA", "secret", None,
@@ -197,7 +200,8 @@ class TestStsAssumeRole(unittest.TestCase):
                 )
         else:
             err = urllib.error.HTTPError(
-                "https://sts.amazonaws.com/", status, "Error", {}, io.BytesIO(xml_response.encode()))
+                "https://sts.amazonaws.com/", status, "Error", email.message.Message(),
+                io.BytesIO(xml_response.encode()))
             with mock.patch("urllib.request.urlopen", side_effect=err):
                 return _sts_assume_role(
                     "AKIA", "secret", None,
@@ -233,13 +237,14 @@ class TestAssumeRoleProvider(unittest.TestCase):
             None, "base",
         )
 
-    def _mint(self, settings: dict, minted_creds: dict | None = None,
+    def _mint(self, settings: dict[str, object],
+              minted_creds: dict[str, MintedCredential] | None = None,
               sts_xml: str = _STS_XML) -> MintedCredential:
         import unittest.mock as mock
         resp = mock.MagicMock()
         resp.read.return_value = sts_xml.encode()
-        resp.__enter__ = lambda s: s
-        resp.__exit__ = mock.MagicMock(return_value=False)
+        resp.__enter__.return_value = resp
+        resp.__exit__.return_value = False
         env = {"AWS_ACCESS_KEY_ID": "ENV_KEY", "AWS_SECRET_ACCESS_KEY": "ENV_SECRET"}
         with mock.patch("urllib.request.urlopen", return_value=resp), \
                 unittest.mock.patch.dict(os.environ, env):
@@ -247,16 +252,16 @@ class TestAssumeRoleProvider(unittest.TestCase):
                                       minted_creds=minted_creds)
 
     def test_mint_with_base_cred_uses_it(self) -> None:
-        import urllib.request as _ur
         import unittest.mock as mock
-        captured: list = []
+        captured: list[Any] = []
 
-        def _fake_urlopen(req, timeout=None):
+        def _fake_urlopen(req: Any, timeout: float | None = None) -> Any:
+            del timeout
             captured.append(req)
             resp = mock.MagicMock()
             resp.read.return_value = _STS_XML.encode()
-            resp.__enter__ = lambda s: s
-            resp.__exit__ = mock.MagicMock(return_value=False)
+            resp.__enter__.return_value = resp
+            resp.__exit__.return_value = False
             return resp
 
         with mock.patch("urllib.request.urlopen", side_effect=_fake_urlopen):
@@ -307,7 +312,7 @@ class TestAssumeRoleProvider(unittest.TestCase):
 
     def test_describe(self) -> None:
         g = self.provider.describe({"role_arn": "arn:aws:iam::123:role/my-role"})
-        self.assertEqual("my-role", g.acts_from if hasattr(g, "acts_from") else g.acts_as)
+        self.assertEqual("my-role", g.acts_as)
         self.assertIn("STS", g.authority)
         self.assertIn("hour", g.lifetime)
 
@@ -322,7 +327,7 @@ class TestAssumeRoleProvider(unittest.TestCase):
 
 
 class TestTopoSort(unittest.TestCase):
-    def _sort(self, creds: dict) -> list:
+    def _sort(self, creds: dict[str, dict[str, object]]) -> list[str]:
         from bot_bottle.control.hostctl.cred_mint import _topo_sort
         return _topo_sort(creds)
 
