@@ -173,7 +173,8 @@ def received(msg: dict[str, Any],
         return False, None
     _echoed()
     me = _own_id()
-    adopt = ({"type": SET_MESSAGE, "host": me, "connection": own.connection}
+    adopt = ({"type": SET_MESSAGE, "host": me, "connection": own.connection,
+              "adopt": True}
              if not account.host and own.host == LOCAL and me else None)
     return changed, adopt
 

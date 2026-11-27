@@ -380,7 +380,7 @@ class TheConsoleLink(_Store):
     def test_adoption_is_offered_once_per_connect(self) -> None:
         self.store.set_host_config(HostConfig(architect_connection="codex"),
                                    ["architect_connection"])
-        offer = {"type": "architect.set", "host": ME, "connection": "codex"}
+        offer = {"type": "architect.set", "host": ME, "connection": "codex", "adopt": True}
         for _connect in range(2):
             link, sent = self.connect()
             for _ in range(2):

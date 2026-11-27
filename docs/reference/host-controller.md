@@ -1579,7 +1579,7 @@ Each is at most 200 characters. The link carries the account's:
 | Message | Direction | Fields |
 |---|---|---|
 | `architect` | console -> host | `host` (an id, `off`, or `""` when the account has none), `connection`, and optionally `label` (that host's name). Sent on each connect and whenever they change. An invalid `host` is `""`, an invalid `connection` `auto`. |
-| `architect.set` | host -> console | `host` and/or `connection`: a change for the account. The console answers with its next `architect`. |
+| `architect.set` | host -> console | `host` and/or `connection`: a change for the account; `adopt: true` when it's an adoption offer, which the console takes only while the account has no architect host. The console answers with its next `architect`. |
 
 - **Kept.** The host keeps the account's values in the host DB, so they hold
   across restarts and while offline. A change is reported at once in a
@@ -1591,8 +1591,8 @@ Each is at most 200 characters. The link carries the account's:
   values itself. Without the link it fails ("can't reach the console; the
   architect setting is the account's"), and nothing is queued.
 - **Adoption.** A paired host sent `host: ""` whose own `host` is `local`
-  sends `architect.set` with its id and its own connection, once per
-  connect. The console takes the first offer.
+  sends `architect.set` with its id, its own connection and `adopt: true`,
+  once per connect. The console takes the first offer and ignores the rest.
 
 **`host_stats.architect`** reports it: `host` and `connection` in force,
 `is_architect`, `ready`, and either `runs_on` (the harness: `claude` or
