@@ -1,4 +1,4 @@
-# GitHub-hosted port of .gitea/workflows/lint.yml: the immutable image-input
+# Lint, on GitHub-hosted runners: the immutable image-input
 # and published-artifacts checks, pylint (score >= 8.0) and strict pyright.
 # See docs/reference/ci.md.
 
