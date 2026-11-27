@@ -20,7 +20,6 @@ from .loader import (
     BUILTIN_AGENTS_DIR,
     BUILTIN_BOTTLES_DIR,
     BottleSource,
-    agent_listed,
     bottle_ref,
     check_stale_json,
     load_bottle_chain,
@@ -249,24 +248,16 @@ class ManifestIndex:
 
     @property
     def all_agent_names(self) -> list[str]:
-        """Sorted agent names offered to pick one to launch (filenames in lazy
-        mode), built-ins included, those marked `listed: false` left out."""
+        """Sorted agent names (filenames in lazy mode), built-ins included."""
         if self.home_md is not None:
             return sorted(self.agent_files(listing=True))
-        return sorted(n for n, a in self.agents.items() if a.listed)
-
-    def has_agent_named(self, name: str) -> bool:
-        """Whether `name` resolves to an agent, listed or not."""
-        if self.home_md is not None:
-            return name in self.agent_files()
-        return name in self.agents
+        return sorted(self.agents.keys())
 
     def agent_files(self, *, listing: bool = False) -> dict[str, Path]:
         """Each agent name's file, lazy mode: a project's over the host's over
         the built-ins (`BUILTIN_AGENTS_DIR`). A built-in is named by its
         harness; `listing` keeps only those whose harness is ready here, so
-        what's offered can run, and leaves out any file marked `listed:
-        false` (one named outright still resolves)."""
+        what's offered can run (one named outright still resolves)."""
         assert self.home_md is not None
         files = scan_agent_names(self.home_md / "agents")
         for directory in reversed(self.extra_agent_dirs):
@@ -274,10 +265,7 @@ class ManifestIndex:
         if self.cwd_md is not None:
             files.update(scan_agent_names(self.cwd_md / "agents"))
         builtins = {n: p for n, p in scan_agent_names(BUILTIN_AGENTS_DIR).items()
-                    if n not in files and (not listing or (
-                        agent_listed(p) and harness_ready(n)))}
-        if listing:
-            files = {n: p for n, p in files.items() if agent_listed(p)}
+                    if n not in files and (not listing or harness_ready(n))}
         return {**builtins, **files}
 
     def host_agent(self, name: str) -> Path | None:
@@ -314,7 +302,7 @@ class ManifestIndex:
             raise ManifestError(
                 f"agent '{agent_name}' not defined. Available: {available}"
             )
-        agent = self.agents[agent_name].resolved(agent_name)
+        agent = self.agents[agent_name]
         raw_bottle = _resolve_effective_bottle_eager(bottle_names, self.bottles)
         return _manifest_with_merged_git_user(agent, raw_bottle)
 
@@ -345,7 +333,7 @@ class ManifestIndex:
 
         validate_agent_frontmatter_keys(agent_path, fm.keys())
 
-        agent = agent_from_frontmatter(agent_name, dict(fm), body).resolved(agent_name)
+        agent = agent_from_frontmatter(agent_name, dict(fm), body)
         raw_bottle, bottle_sources = _resolve_effective_bottle_lazy(
             bottle_names, self.bottle_dirs(), dict(agent.forge_users))
         if agent_name in cwd_agents:

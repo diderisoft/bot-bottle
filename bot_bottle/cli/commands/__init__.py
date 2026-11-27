@@ -21,6 +21,7 @@ _HANDLERS: dict[str, str] = {
     "bots": "bottled_agents:cmd_bottled_agents",
     "cleanup": "cleanup:cmd_cleanup",
     "commit": "commit:cmd_commit",
+    "config": "config:cmd_config",
     "doctor": "doctor:cmd_doctor",
     "down": "lifecycle:cmd_down",
     "envs": "envs:cmd_envs",

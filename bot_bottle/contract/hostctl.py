@@ -56,6 +56,12 @@ AUDIT_APPEND_PATH = "/audit/append"
 # (PRD 0117). POST {settings} to the second boots the architect's warm bottle.
 SUGGEST_PATH = "/suggest"
 ARCHITECT_WARM_PATH = "/architect/warm"
+# `cli` only. GET: the bottle architect here, `{host, connection,
+# is_architect, ready, runs_on | reason, label}` (`architect_setting.report`),
+# for `bot-bottle status`. POST `{host?, connection?}` or `{unset}` changes it
+# (`architect_setting.change`): this host's own values while unpaired, else the
+# account's, through the console; 409 when the console can't be asked.
+ARCHITECT_PATH = "/architect"
 # The host DB, for the `cli` role only: the CLI never opens it (ADR 0020).
 # GET /host/config: the host's settings (`HostConfig.to_json()`); POST sets
 # the fields given and answers with all of them.
@@ -469,7 +475,7 @@ __all__ = [
     "AUDIT_APPEND_PATH", "AUDIT_IMPORT_PATH", "AUDIT_PRODUCERS", "AUDIT_QUERY_PATH",
     "AGENT_PREFS_PATH", "AUDIT_PASSKEYS_PATH", "AUDIT_REBUILD_PATH", "BOTTLED_AGENTS_PATH",
     "BOTTLED_AGENTS_REMOVE_PATH", "INFRA_STATE_PATH", "WORKSPACE_DISKS_PATH",
-    "WORKSPACE_DISKS_REMOVE_PATH", "ARCHITECT_WARM_PATH", "FORGES_PATH",
+    "WORKSPACE_DISKS_REMOVE_PATH", "ARCHITECT_PATH", "ARCHITECT_WARM_PATH", "FORGES_PATH",
     "FORGE_KEYS_PATH", "FORGE_KEYS_REMOVE_PATH",
     "FORGES_REMOVE_PATH", "HOST_CONFIG_PATH", "PAIRING_PATH", "PROJECTS_PATH",
     "PROJECTS_REMOVE_PATH", "TRUST_PATH",

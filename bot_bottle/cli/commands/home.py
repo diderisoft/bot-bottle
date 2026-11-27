@@ -99,7 +99,7 @@ def take_snapshot(cwd: Path) -> Snapshot:  # pylint: disable=too-many-locals
     settings = settings_from_env()
     try:
         index = ManifestIndex.resolve(str(cwd), missing_ok=True)
-        snap.agents = [a for a in index.all_agent_names if a != ARCHITECT]
+        snap.agents = index.all_agent_names
     except (ManifestError, OSError):
         pass
     snap.starters = {h: h in snap.agents for h in HARNESSES}

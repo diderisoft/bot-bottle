@@ -106,13 +106,14 @@ def start_firehose() -> FirehoseHub:
 
 def adopt_builtin_starters() -> None:
     """A starter an earlier `setup` wrote that's built in now, and unchanged,
-    gives way to the built-in, so upgrading bot-bottle reaches it (PRD 0131).
+    gives way to the built-in, so upgrading bot-bottle reaches it (PRD 0131);
+    so does its bottle-architect agent, which bot-bottle runs itself now.
     Best effort: the copy stays if it can't be checked."""
     # pylint: disable=import-outside-toplevel
-    from ...manifest.loader import BUILTIN_AGENTS_DIR, scan_agent_names
     from ...manifest.versions import VersionError, adopt_builtin_agents
+    from ...suggest.architect_agent import adoptable_agents
     try:
-        gone = adopt_builtin_agents(scan_agent_names(BUILTIN_AGENTS_DIR))
+        gone = adopt_builtin_agents(adoptable_agents())
     except (VersionError, OSError, ValueError) as e:  # ValueError: undecodable git output
         warn(f"couldn't check for built-in agents: {e}")
         return

@@ -72,7 +72,10 @@ def _suggest(task: str, cwd: Path | None, turns: list[Turn]) -> Proposal:
     # pylint: disable=import-outside-toplevel
     from ...suggest.flow import suggest
     from .architect_bottle import runner
-    return suggest(task, cwd, run=runner(), turns=turns or None)
+    from .architect_setting import suggest_args
+    provider, not_here = suggest_args()
+    return suggest(task, cwd, run=runner(), provider=provider, turns=turns or None,
+                   not_here=not_here)
 
 
 def _dirs(job: _Job) -> list[tuple[Path, bool]]:

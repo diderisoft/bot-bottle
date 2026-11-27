@@ -25,12 +25,12 @@ from ...contract.hostctl import (
     LIVE_BOTTLES_PATH, ORCHESTRATOR_PATH, ROLE_ORCHESTRATOR, SESSIONS_PATH, STATUS_PATH,
     WORKSPACE_DISKS_PATH, WORKSPACE_DISKS_REMOVE_PATH, LIBRARY_SYNC_PATH, PROJECTS_PATH,
     PROJECTS_REMOVE_PATH,
-    ARCHITECT_WARM_PATH, SUGGEST_PATH, LaunchRequest, Settings, status_body,
+    ARCHITECT_PATH, ARCHITECT_WARM_PATH, SUGGEST_PATH, LaunchRequest, Settings, status_body,
 )
 from ...lib import websocket as ws
 from ...lib.log import debug
 from .. import rotate_ca
-from . import checkouts, host_state, orchestrator, suggest_routes
+from . import architect_setting, checkouts, host_state, orchestrator, suggest_routes
 from .attach import Viewer
 from .audit_events import AuditUnavailable, digest_request
 from .audit_import import AuditImportError
@@ -60,6 +60,7 @@ _HOST_STATE: dict[str, _HostRoute] = {
     WORKSPACE_DISKS_REMOVE_PATH: host_state.remove_workspace_disk,
     LIBRARY_SYNC_PATH: host_state.library_sync,
     PROJECTS_PATH: checkouts.add, PROJECTS_REMOVE_PATH: checkouts.remove,
+    ARCHITECT_PATH: architect_setting.change,
 }
 _HOST_STATE_READS: dict[str, _HostRoute] = {
     HOST_CONFIG_PATH: lambda _body: host_state.config(), FORGES_PATH: host_state.forges,
@@ -67,6 +68,7 @@ _HOST_STATE_READS: dict[str, _HostRoute] = {
     AUDIT_PASSKEYS_PATH: host_state.passkeys, BOTTLED_AGENTS_PATH: host_state.bottled_agents,
     AGENT_PREFS_PATH: host_state.agent_prefs, INFRA_STATE_PATH: host_state.infra_state,
     WORKSPACE_DISKS_PATH: host_state.workspace_disks, PROJECTS_PATH: checkouts.listed,
+    ARCHITECT_PATH: architect_setting.status,
 }
 
 
@@ -288,8 +290,8 @@ class _Handler(BaseHTTPRequestHandler):
         self._host_state(_HOST_STATE[urlsplit(self.path).path])
 
     def _host_state(self, handler: _HostRoute, *, read: bool = False) -> None:
-        """A host DB route (`host_state`). A journal that won't index or a
-        segment that won't import is 409."""
+        """A host DB route (`host_state`). A journal that won't index, a
+        segment that won't import or a console that can't be asked is 409."""
         if self._allowed((ROLE_CLI,)) is None:
             return
         try:
@@ -297,7 +299,7 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError as e:
             self._send(400, {"error": str(e)})
             return
-        except (IndexBreak, AuditImportError) as e:
+        except (IndexBreak, AuditImportError, architect_setting.Unreachable) as e:
             self._send(409, {"error": str(e)})
             return
         except (OSError, sqlite3.Error) as e:

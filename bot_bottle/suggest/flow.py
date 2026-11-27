@@ -1,9 +1,9 @@
 """The one bottle-suggestion flow (PRD 0117), shared by
 `bot-bottle bottles suggest` and the console's launch page.
 
-`bottle-architect` answers first; when it can't (no agent, a harness that
-can't run with no tools, not logged in, a failure, an answer that isn't a
-proposal), the rules path does, and the proposal says why. Either way the
+`bottle-architect` answers first; when it can't (this isn't the architect
+host, its connection isn't ready here, a failure, an answer that isn't a proposal), the rules
+path does, and the proposal says why. Either way the
 proposal is validated against the bottles the project sees and carries
 `source` (`architect` or `rules`). `rules=True` skips the architect: the
 offline, deterministic path.
@@ -20,6 +20,7 @@ from pathlib import Path
 
 from ..paths import bot_bottle_root
 from .architect import ArchitectError, Runner, architect_suggest
+from .architect_provider import AUTO
 from .proposal import Proposal
 from .rules import rules_suggest
 from .runnable import host_secrets
@@ -53,27 +54,34 @@ def suggest(
     *,
     rules: bool = False,
     run: Runner | None = None,
+    provider: str = AUTO,
     host_root: Path | None = None,
     turns: list[Turn] | None = None,
+    not_here: str = "",
 ) -> Proposal:
     """A validated proposal for `task`. `cwd` is the project directory, or
-    None when there's none to look at. `run` asks the architect; without
-    one, the rules path answers and says why. `turns` is the conversation
-    so far (PRD 0118), for the architect."""
+    None when there's none to look at. `run` asks the architect on
+    `provider` (`bottle-architect.connection`); without one, or with
+    `not_here` (why this host doesn't run the architect), the rules path
+    answers and says why. `turns` is the conversation so far (PRD 0118), for
+    the architect."""
     # pylint: disable-next=import-outside-toplevel
     from .forges import described_forges
     host_root = host_root or bot_bottle_root()
     notes = [] if cwd is not None else [NO_PROJECT_NOTE]
     dirs = bottle_dirs(cwd, host_root)
     described = described_forges(dirs, cwd)
-    if rules:
+    if rules or not_here:
         proposal, source = rules_suggest(task, cwd, host_root=host_root), SOURCE_RULES
+        if not rules:
+            notes.append(f"{not_here.rstrip('.')}; this is the rules path")
     else:
         try:
             if run is None:
                 raise ArchitectError(NO_RUNNER)
-            proposal = architect_suggest(task, cwd, run=run, host_root=host_root,
-                                         described=described, turns=turns)
+            proposal = architect_suggest(task, cwd, run=run, provider=provider,
+                                         host_root=host_root, described=described,
+                                         turns=turns)
             source = SOURCE_ARCHITECT
         except ArchitectError as e:
             proposal, source = rules_suggest(task, cwd, host_root=host_root), SOURCE_RULES

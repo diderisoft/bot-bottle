@@ -55,9 +55,7 @@ A project agent needs trust when its `agent_provider` grants something:
 
 It also needs trust when it runs on one of your bottles that grants more than
 `basic`. A project agent with the same name as one of yours, or a built-in
-(`claude`, `codex`, `bottle-architect`), replaces it, and the trust prompt
-says so. The architect itself only ever reads your copy or the built-in, so
-a project's `bottle-architect` is just an agent of that name.
+(`claude`, `codex`), replaces it, and the trust prompt says so.
 
 ### What an agent's trust covers
 

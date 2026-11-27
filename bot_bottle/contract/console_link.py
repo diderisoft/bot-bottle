@@ -61,6 +61,8 @@ CONSOLE_MESSAGES: frozenset[str] = frozenset({
     "decrypt_audit_records",
     # upgrades
     "upgrade_challenge", "upgrade", "upgrade_status",
+    # the account's bottle architect host and connection
+    "architect",
 })
 
 # A card's option (in `attention.options`) -> the message that answers it.

@@ -87,7 +87,7 @@ def pick_agent(named: str | None, manifest: "ManifestIndex", *,
     remembered = start_prefs.remembered_agent()
     if remembered in agents:
         return remembered
-    choices = logged_in_harnesses(agents) or [a for a in agents if a != "bottle-architect"]
+    choices = logged_in_harnesses(agents) or agents
     if not choices or (len(choices) > 1 and not interactive):
         return None
     picked = (choices[0] if len(choices) == 1

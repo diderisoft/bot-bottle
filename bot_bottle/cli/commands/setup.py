@@ -39,11 +39,12 @@ from ...control.hostctl.runner import HostControlError
 from . import login
 from ...errors import SecretsFileError
 from ...lib import log, prompt
-from ...manifest.loader import BUILTIN_AGENTS_DIR, scan_agent_names
+from ...manifest.loader import BUILTIN_AGENTS_DIR
 from ...manifest.versions import VersionError, adopt_builtin_agents, record_or_warn
 from ...paths import bot_bottle_root, host_secrets_path
 from ...secret_source import write_secret
 from ...starter import STARTER_MARKER
+from ...suggest.architect_agent import ARCHITECT_AGENT, ARCHITECT_NOTE, adoptable_agents
 from ..constants import PROG
 from ..host_state_client import pairing as current_pairing
 from .. import openrouter
@@ -96,14 +97,18 @@ class Setup:
 
     def adopt_builtins(self) -> None:
         """A starter an earlier `setup` wrote that's built in now, and that
-        nobody changed, gives way to the built-in (PRD 0131)."""
+        nobody changed, gives way to the built-in (PRD 0131). So does the
+        bottle-architect agent it wrote: the architect is part of bot-bottle,
+        and a changed copy is an agent like any other."""
         try:
-            gone = adopt_builtin_agents(scan_agent_names(BUILTIN_AGENTS_DIR), root=self.manifests)
+            gone = adopt_builtin_agents(adoptable_agents(), root=self.manifests)
         except (VersionError, OSError, ValueError) as e:
             self.say(f"warn: couldn't check for built-in agents: {e}")
-            return
+            gone = []
         for name in gone:
             self.say(f"  {name} agent: built in now (removed the unchanged copy setup wrote)")
+        if self.starter_exists(ARCHITECT_AGENT):
+            self.say(f"note: {ARCHITECT_NOTE}")
 
     def starter_exists(self, name: str) -> bool:
         return (self.manifests / "agents" / f"{name}.md").exists()
@@ -136,7 +141,10 @@ class Setup:
                 # The agent carries the provider, so pi's model refresh rewrites it.
                 self.write("agents", name, provider.create_default_agent_manifest(detection),
                            replace=name == "pi" and self.refresh_model)
-        # bottle-architect is built in too (`harness: auto`), so nothing to write.
+        # The bottle architect is part of bot-bottle: nothing to write. An
+        # unpaired host runs it itself (`bottle-architect.host` is `local`).
+        self.say(f"bottle architect: this host is the bottle architect host "
+                 f"(`{PROG} config` shows its settings)")
         return 0
 
     def pi_detection(  # pylint: disable=too-many-return-statements  # one per outcome

@@ -68,6 +68,11 @@ class TestConfigStore(unittest.TestCase):
                 "github_app_client_id",
                 "audit_retention_days",
                 "audit_retention_max_gb",
+                "architect_host",
+                "architect_connection",
+                "architect_account_host",
+                "architect_account_connection",
+                "architect_account_label",
             ], columns)
 
     def test_firehose_settings_round_trip(self) -> None:

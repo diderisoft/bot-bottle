@@ -18,7 +18,7 @@ from typing import Any
 from .. import host_access
 from ..contract.hostctl import (
     AGENT_PREFS_PATH, AUDIT_IMPORT_PATH, AUDIT_PASSKEYS_PATH, AUDIT_QUERY_PATH, AUDIT_REBUILD_PATH,
-    HOST_CONFIG_PATH, PAIRING_PATH,
+    ARCHITECT_PATH, HOST_CONFIG_PATH, PAIRING_PATH,
 )
 from ..control.hostctl import runner
 from ..control.hostctl.agent_prefs import AgentPrefs
@@ -90,6 +90,26 @@ def running_pairing() -> tuple[Pairing, dict[str, Any]] | None:
     return _pairing_reply(HostControlClient(state, runner.cli_token()).get(PAIRING_PATH))
 
 
+def architect() -> dict[str, Any]:
+    """The bottle architect in force here (`ARCHITECT_PATH`)."""
+    return dict(_client().get(ARCHITECT_PATH))
+
+
+def set_architect(body: dict[str, object]) -> dict[str, Any]:
+    """Change it (`ARCHITECT_PATH`): `{host?, connection?}` or `{unset}`. On
+    a paired host the console is asked, which may take seconds."""
+    return dict(_client().post(ARCHITECT_PATH, body))
+
+
+def running_architect() -> dict[str, Any] | None:
+    """The bottle architect here (`ARCHITECT_PATH`), or None when no host
+    controller is running: one isn't started for it."""
+    state = runner.running()
+    if state is None:
+        return None
+    return dict(HostControlClient(state, runner.cli_token()).get(ARCHITECT_PATH))
+
+
 def set_pairing(*, new: bool = False, **changes: object) -> Pairing:
     """Change the pairing (`PAIRING_PATH`): a `new` one clears what
     `changes` doesn't name. `access_token` and `refresh_token` are values,
@@ -119,6 +139,8 @@ def remember_agent(agent: str, directory: str = "") -> AgentPrefs:
                                                {"agent": agent, "dir": directory}))
 
 
-__all__ = ["agent_prefs", "audit_import", "audit_passkeys", "audit_query", "audit_rebuild",
-           "host_config", "pairing", "remember_agent", "running_pairing", "set_host_config",
+__all__ = ["agent_prefs", "architect",
+           "audit_import", "audit_passkeys", "audit_query", "audit_rebuild",
+           "host_config", "pairing", "remember_agent", "running_architect", "running_pairing",
+           "set_architect", "set_host_config",
            "set_pairing", "trust_passkeys"]

@@ -8,8 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from bot_bottle.manifest.loader import BUILTIN_AGENTS_DIR
-from bot_bottle.suggest import architect, starter
+from bot_bottle.suggest import architect, architect_agent
 from tests.unit._forges import connected
 from tests.unit.test_suggest_runnable import CONN
 
@@ -56,10 +55,9 @@ class TestLibraryCost(unittest.TestCase):
                                        library["app-dev"]["element_count"],
                                        library["app-dev"]["repos"]))
 
-    def test_the_starter_says_not_to_stack_for_a_forge(self) -> None:
-        prompt = (BUILTIN_AGENTS_DIR / f"{starter.ARCHITECT_AGENT}.md").read_text()
-        self.assertIn("needs no bottle stacked for its forge", prompt)
-        self.assertIn("never stack a bottle\n  just to reach a forge", prompt)
+    def test_the_prompt_says_not_to_stack_for_a_forge(self) -> None:
+        self.assertIn("needs no bottle stacked for its forge", architect_agent.PROMPT)
+        self.assertIn("never stack a bottle\n  just to reach a forge", architect_agent.PROMPT)
 
     def test_the_prompt_lists_the_hosts_connections(self) -> None:
         with connected(CONN):

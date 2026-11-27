@@ -126,6 +126,7 @@ def cmd_status(argv: list[str]) -> int:
     # pylint: disable-next=import-outside-toplevel
     from .remote import link_line
     print(link_line())
+    print(architect_line())
     # The environment's orchestrator: whichever backend's its bring-up recorded.
     # pylint: disable-next=import-outside-toplevel
     from .doctor import orchestrator_report
@@ -146,6 +147,26 @@ def cmd_status(argv: list[str]) -> int:
         print()
         _print_jobs(state)
     return 0 if state and healthy else 1
+
+
+def architect_line() -> str:
+    """Where bottle suggestions run, as the host controller has it
+    (`architect: this host, auto → claude`, `architect: delphi`). It starts
+    none."""
+    # pylint: disable-next=import-outside-toplevel
+    from ..host_state_client import running_architect
+    try:
+        found = running_architect()
+    except runner.HostControlError as e:
+        return f"architect: unknown ({getattr(e, 'error', '') or e})"
+    if found is None:
+        return "architect: unknown (the host controller isn't running)"
+    line = f"architect: {found.get('label') or found.get('host') or 'none'}"
+    if found.get("is_architect") and not found.get("ready"):
+        line += f"; not ready, so suggestions use the rules: {found.get('reason')}"
+    elif not found.get("host"):  # no architect host: say how to choose one
+        line += f"; {found.get('reason')}"
+    return line
 
 
 def _definitions_line() -> str:

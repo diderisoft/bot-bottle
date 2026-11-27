@@ -73,7 +73,9 @@ only its model API:
 
 That bottle is what contains it, so any harness can be the architect. Each
 proposal is a fresh headless call, with a 120-second timeout, so tasks never
-share a conversation.
+share a conversation. When the connection changes, the next proposal replaces
+the bottle with one on the new connection. Only the architect host boots it
+(see [Choosing its host and model](#choosing-its-host-and-model)).
 
 The host controller keeps the architect's bottle running, so a proposal
 doesn't wait for a boot. `BOT_BOTTLE_ARCHITECT_ALWAYS_ON=0` boots it on demand
@@ -90,25 +92,50 @@ instead, and stops it after `BOT_BOTTLE_ARCHITECT_IDLE` seconds idle (default
 - the forges this host connected, and known ones it hasn't
 - secret *names* from the secrets file, never values
 
-## Customizing it
+## Choosing its host and model
 
-The architect is a built-in agent (`manifest/builtin_agents/bottle-architect.md`),
-so it upgrades with bot-bottle. It runs on `harness: auto`: claude where it's
-installed and logged in, else codex. With neither, suggestions use the rules
-path and say why. It's marked `listed: false`, so it isn't offered as an agent
-to launch ([manifest.md](manifest.md#composing-bottles)).
+The architect is part of bot-bottle: its prompt, the JSON its answer follows
+and its bottle upgrade with it, and no agent file is read for it. Two
+settings choose where it runs:
 
-To change it, copy it to `~/.bot-bottle/agents/bottle-architect.md` (or Copy
-to library in the console), which replaces the built-in. Edit it like any
-agent:
+- `bottle-architect.host`: the one host of your account that runs it. Paired,
+  it's a host, or `off` (the rules path only). Nothing picks one for you, but
+  a host that pairs while your account has none offers itself, and the
+  console takes the first offer. An unpaired host has `local` (itself, the
+  default) or `off`.
+- `bottle-architect.connection`: what the architect host runs it on.
 
-- its body is the prompt
-- `agent_provider.harness` picks the harness (pi needs a copy that names it)
-- `model:` picks the model
+| Connection | Runs on |
+|---|---|
+| `auto` (default) | claude, else codex: the first installed and logged in on the host |
+| `claude` | Claude Code, with the host's login |
+| `codex` | Codex, with the host's login |
+| `pi:<provider>/<model>` | pi on that model, with the host's pi config (`~/.pi/agent/models.json`, or pi's built-in provider of that name) and its key in the host secrets, as pi's starter uses them; e.g. `pi:openrouter/qwen/qwen3-coder:free` |
 
-Only your own copy is read, never a project's. A copy an earlier `setup`
-wrote is removed if it's unchanged and on claude or codex, so the built-in
-takes over.
+On a paired host both settings are your account's. Set them in the console's
+Settings ("Bottle architect"), or with `bot-bottle config set
+bottle-architect.host <host>` (`local` means this host) and `bot-bottle config
+set bottle-architect.connection <value>` on any of your hosts: that asks the
+console, so it needs the console link, and `config unset` is refused. The
+console sends the values to each host, which keeps them while offline.
+
+On an unpaired host they're its own: `config set` writes them, and `config
+unset` goes back to the default.
+
+Other hosts suggest with the rules path, and say why: the architect is off,
+your account has no architect host, or it's another host (routing their
+suggestions to it hasn't shipped). `bot-bottle status` shows where it runs
+(`architect: this host, auto → claude`, `architect: delphi`), and the console
+shows each host's.
+
+A connection that isn't ready on the architect host (not installed, not
+logged in, no pi key for that provider) is never swapped for another, except
+under `auto`: the rules path answers and says why.
+
+An `agents/bottle-architect.md` an earlier `setup` wrote is removed, if it's
+unchanged, by `setup` and when the host controller starts. A copy you
+changed stays as an agent like any other; the architect doesn't read it, and
+`setup` and `bot-bottle doctor` say so.
 
 ## What it may propose
 
@@ -153,9 +180,9 @@ than failing the whole proposal.
 
 ## When the architect can't answer
 
-A rules path answers instead, and the proposal's notes say why: no agent file,
-a harness not logged in, a timeout, or an answer that wasn't a proposal.
-`bottles suggest --rules` uses it on purpose.
+A rules path answers instead, and the proposal's notes say why: the
+architect is `off`, this isn't the architect host, its connection isn't
+ready here, a timeout, or an answer that wasn't a proposal. `bottles suggest --rules` uses it on purpose.
 
 The rules path never calls a model and ignores the task. It takes the first
 that fits:

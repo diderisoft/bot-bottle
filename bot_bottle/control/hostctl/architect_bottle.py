@@ -9,6 +9,13 @@ stays up for `Settings.operation.architect_idle_seconds`
 (`BOT_BOTTLE_ARCHITECT_IDLE`, default 600) after its last suggestion, so back-to-back starts
 and console suggestions reuse it.
 
+It boots only on the architect host, on the connection
+`bottle-architect.connection` names (`architect_setting`): the architect's
+agent is written for that connection into the boot's stage directory
+(`Architect.agent_file`), never read from `~/.bot-bottle/agents/`. A
+suggestion on another connection (the setting changed) replaces the bottle
+first.
+
 Each suggestion (`run`) is a fresh headless harness call inside the VM, so
 tasks never share a conversation; the prompt's static part (the agent's
 system prompt, provisioned as its prompt file) comes first, where a harness
@@ -32,8 +39,8 @@ from typing import TYPE_CHECKING, Any
 
 from ...contract.hostctl import Settings
 from ...lib import log
-from ...suggest.architect import TIMEOUT_SECONDS, Architect, ArchitectError
-from ...suggest.starter import ARCHITECT_AGENT
+from ...suggest.architect import TIMEOUT_SECONDS, Architect, ArchitectError, load_architect
+from ...suggest.architect_agent import ARCHITECT_AGENT
 
 if TYPE_CHECKING:
     from ...backend import BottleBackend
@@ -80,11 +87,6 @@ exit 0
 """
 
 
-def model_args(model: str) -> list[str]:
-    """The harness args that pick `model` (claude, codex and pi take `--model`)."""
-    return ["--model", model] if model else []
-
-
 # A call is one structured answer from what the prompt holds, so the harness
 # gets nothing to wander with. For claude: no tools and no MCP servers (a call
 # that went exploring its empty home took 28s, not 5s), a one-line system
@@ -107,16 +109,28 @@ def _default_backend(settings: Settings) -> "BottleBackend[Any, Any]":
     return get_bottle_backend(settings, prompt=False)
 
 
+def _configured() -> Architect:
+    """The architect on the connection in force; ArchitectError when this
+    isn't the architect host or the connection isn't ready."""
+    from .architect_setting import in_force  # pylint: disable=import-outside-toplevel
+    found = in_force()
+    if not found.is_architect:
+        raise ArchitectError(found.reason)
+    return load_architect(found.connection)
+
+
 class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
     """One warm `bottle-architect` bottle, booted on demand."""
 
     def __init__(self, *, host_root: Path,
                  backend_for: Callable[[Settings], "BottleBackend[Any, Any]"] = _default_backend,
                  secrets_file: Path | None = None, audit: "HostAudit | None" = None,
-                 idle: float | None = None, clock: Callable[[], float] = time.monotonic) -> None:
+                 idle: float | None = None, clock: Callable[[], float] = time.monotonic,
+                 configured: Callable[[], Architect] = _configured) -> None:
         # `idle` fixes the idle time (tests); else each warm or suggestion's
-        # settings set it.
+        # settings set it. `configured` is the architect a warm boots.
         self._host_root = host_root
+        self._configured = configured
         self._backend_for = backend_for
         self._secrets_file = secrets_file
         self._audit = audit
@@ -130,6 +144,7 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
         self._error = ""
         self._bottle: Any = None
         self._plan: Any = None
+        self._booted: Architect | None = None  # what the bottle up (or coming up) runs
         self._busy = 0
         self._last_used = 0.0
         self._stopping = False
@@ -146,10 +161,23 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
 
     def warm(self, settings: Settings | None = None) -> None:
         """Boot the bottle in the background unless it's up or coming up. Its
-        settings take effect now: the holder rechecks whether to stay up."""
+        settings take effect now: the holder rechecks whether to stay up.
+        Nothing boots unless this is the architect host and it's ready."""
+        architect = self._architect()
         with self._cond:
-            self._start_locked(settings or Settings())
+            if architect is not None:
+                self._start_locked(settings or Settings(), architect)
             self._cond.notify_all()
+
+    def _architect(self) -> Architect | None:
+        """The architect to boot, or None (the reason kept as the error)."""
+        try:
+            return self._configured()
+        except ArchitectError as e:
+            with self._cond:
+                if self._state == "down":
+                    self._error = str(e)
+            return None
 
     def stop(self) -> None:
         """Tear the bottle down (after any suggestion in flight)."""
@@ -160,35 +188,43 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
         if thread is not None:
             thread.join(timeout=BOOT_SECONDS)
 
-    def _start_locked(self, settings: Settings) -> None:
+    def _start_locked(self, settings: Settings, architect: Architect) -> None:
         if self._fixed_idle is None:
             self._idle = float(settings.operation.architect_idle_seconds)
             self._always_on = settings.operation.architect_always_on
         if self._state != "down":
             return
         self._state, self._error, self._stopping = "booting", "", False
+        self._booted = architect
         self._last_used = self._clock()
         self._generation += 1
-        self._thread = threading.Thread(target=self._hold, args=(settings, self._generation),
+        self._thread = threading.Thread(target=self._hold,
+                                        args=(settings, self._generation, architect),
                                         daemon=True,
                                         name="hostctl-bottle-architect")
         self._thread.start()
 
-    def _spec(self, workspace: str) -> Any:  # a BottleSpec
+    def _spec(self, workspace: str, architect: Architect, stage: Path) -> Any:  # a BottleSpec
+        """The architect's launch: its agent written for its provider into
+        `stage` (found before the host's own agents), in its own bottle."""
         # pylint: disable=import-outside-toplevel
         from ...backend import BottleSpec
         from ...lib.config_store import ConfigStore
         from ...manifest import ManifestIndex
         from ...paths import host_db_path
+        agents = stage / "architect-agent"
+        agents.mkdir(mode=0o700)
+        (agents / f"{ARCHITECT_AGENT}.md").write_text(architect.agent_file(), encoding="utf-8")
         index = ManifestIndex(bottles={}, agents={}, home_md=self._host_root, cwd_md=None,
-                              extra_bottle_dirs=(ARCHITECT_BOTTLES_DIR,))
+                              extra_bottle_dirs=(ARCHITECT_BOTTLES_DIR,),
+                              extra_agent_dirs=(agents,))
         return BottleSpec(manifest=index, agent_name=ARCHITECT_AGENT, copy_cwd=False,
                           user_cwd=workspace, label=ARCHITECT_AGENT,
                           bottle_names=(ARCHITECT_BOTTLE,), headless=True,
                           image_policy="prefer-cached",
                           default_audit_delivery=ConfigStore(host_db_path()).audit_delivery())
 
-    def _hold(self, settings: Settings, generation: int) -> None:
+    def _hold(self, settings: Settings, generation: int, architect: Architect) -> None:
         """The holder thread: boot, serve until idle or stopped, tear down."""
         # pylint: disable=import-outside-toplevel
         from ...bottle_state import settle_state
@@ -201,7 +237,7 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
         identity = ""
         try:
             backend = self._backend_for(settings)
-            plan = backend.prepare(self._spec(workspace), stage_dir=stage,
+            plan = backend.prepare(self._spec(workspace, architect, stage), stage_dir=stage,
                                    secrets=FileSecrets(self._secrets_file or host_secrets_path()))
             identity = str(getattr(plan, "slug", ""))
             with backend.launch(plan) as bottle:
@@ -256,9 +292,12 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
     def boot_if_always_on(self) -> None:
         """At the host controller's start: boot the bottle now when it's
         always on, so the first suggestion finds it up."""
+        if not self._always_on:
+            return
+        architect = self._architect()
         with self._cond:
-            if self._always_on:
-                self._start_locked(Settings())
+            if self._always_on and architect is not None:
+                self._start_locked(Settings(), architect)
 
     # --- a suggestion ---
 
@@ -284,7 +323,13 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
         # pylint: disable-next=import-outside-toplevel
         from .bottles import agent_args
         with self._cond:
-            self._start_locked(settings or Settings())
+            if self._state != "down" and self._booted != architect:
+                # The setting changed: replace the bottle once it's idle.
+                self._stopping = True
+                self._cond.notify_all()
+                raise _BottleGone(f"its bottle runs {self._label(self._booted)}, not "
+                                  f"{self._label(architect)}")
+            self._start_locked(settings or Settings(), architect)
             # Busy from here, so a bottle that just booted waits for this call.
             self._busy += 1
             deadline = self._clock() + BOOT_SECONDS
@@ -298,18 +343,11 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
                 raise ArchitectError(f"its bottle didn't start: {self._error or 'unknown'}")
             bottle, plan = self._bottle, self._plan
         try:
-            if plan.agent_provision.harness != architect.harness:
-                with self._cond:
-                    self._stopping = True  # the next suggestion boots the new harness
-                raise ArchitectError(f"its bottle runs {plan.agent_provision.harness}, but "
-                                     f"{architect.path} now names {architect.harness}; "
-                                     "the next suggestion boots one that does")
             # A mark only this call's process carries, to stop it if it times out.
             mark = f"bot-bottle-architect-call-{uuid.uuid4().hex}"
             argv = bottle.agent_argv(agent_args(
                 architect.harness,
-                (*plan.agent_provision.startup_args, *one_shot_args(architect.harness),
-                 *model_args(architect.model)),
+                (*plan.agent_provision.startup_args, *one_shot_args(architect.harness)),
                 f"{prompt}\n\n<!-- {mark} -->", headless=True), tty=False)
             try:
                 # The proxy behind argv's bare `--env` names comes from here;
@@ -341,8 +379,16 @@ class ArchitectBottle:  # pylint: disable=too-many-instance-attributes
                 self._cond.notify_all()
 
 
+    @staticmethod
+    def _label(architect: Architect | None) -> str:
+        if architect is None:
+            return "nothing"
+        return architect.provider if architect.provider == architect.harness \
+            else f"{architect.provider} ({architect.harness})"
+
+
 class _BottleGone(ArchitectError):
-    """The warm bottle isn't there any more."""
+    """The warm bottle isn't there any more, or runs another provider."""
 
 
 def _alive(bottle: Any) -> bool:
@@ -387,4 +433,4 @@ def runner(settings: Settings | None = None) -> "Callable[[Architect, str], str]
 
 
 __all__ = ["ARCHITECT_BOTTLE", "ARCHITECT_BOTTLES_DIR", "ArchitectBottle", "current", "install",
-           "model_args", "runner"]
+           "runner"]

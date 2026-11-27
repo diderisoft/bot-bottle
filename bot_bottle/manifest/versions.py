@@ -250,9 +250,7 @@ def adopt_builtin_agents(names: Iterable[str], *, root: Path | None = None) -> l
     """Remove each host agent in `names` that's still, byte for byte, a version
     `bot-bottle setup` wrote, by this repo's history, so the built-in of that
     name takes over and upgrades with bot-bottle (PRD 0131). Anything else
-    stays, as yours, and so does a copy on a harness the built-in wouldn't
-    pick (bottle-architect on pi). The names removed; what they held stays
-    in history."""
+    stays, as yours. The names removed; what they held stays in history."""
     root = root or bot_bottle_root()
     names = [n for n in names if (root / "agents" / f"{n}.md").is_file()]
     if not names or not (root / ".git").is_dir():
@@ -264,7 +262,7 @@ def adopt_builtin_agents(names: Iterable[str], *, root: Path | None = None) -> l
     with _locked(root):
         _commit(root, "edited by hand", secrets_file)
         for name in names:
-            if _as_setup_wrote(root, name) and _runs_as_builtin(root, name):
+            if _as_setup_wrote(root, name):
                 (root / "agents" / f"{name}.md").unlink()
                 gone.append(name)
         if gone:
@@ -288,32 +286,6 @@ def _as_setup_wrote(root: Path, name: str) -> bool:
                 check=False).stdout.strip() == current:
             return True
     return False
-
-
-def _runs_as_builtin(root: Path, name: str) -> bool:
-    """Whether the host's `agents/<name>.md` runs on a harness the built-in
-    of that name would: the same one, or one `auto` picks from."""
-    # pylint: disable=import-outside-toplevel
-    from ..agent_provider import AUTO_HARNESS, AUTO_HARNESSES
-    from .loader import BUILTIN_AGENTS_DIR
-    copy, builtin = (_harness(p) for p in (root / "agents" / f"{name}.md",
-                                           BUILTIN_AGENTS_DIR / f"{name}.md"))
-    return copy is not None and (
-        copy == builtin or (builtin == AUTO_HARNESS and copy in AUTO_HARNESSES))
-
-
-def _harness(path: Path) -> str | None:
-    """The `agent_provider.harness` of the agent file at `path`; None when it
-    doesn't parse."""
-    # pylint: disable-next=import-outside-toplevel
-    from ..contract.yaml_subset import YamlSubsetError, parse_frontmatter
-    try:
-        provider = parse_frontmatter(path.read_text(encoding="utf-8"))[0].get("agent_provider")
-    except (OSError, UnicodeDecodeError, YamlSubsetError):
-        return None
-    if isinstance(provider, dict):
-        provider = provider.get("harness", "claude")
-    return provider if isinstance(provider, str) else "claude" if provider is None else None
 
 
 def _repo_of(path: Path, root: Path) -> tuple[Path, bool]:
