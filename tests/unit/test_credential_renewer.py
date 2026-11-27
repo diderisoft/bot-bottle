@@ -41,7 +41,9 @@ class _FakeProvider(CredentialProvider):
         self.retire_calls = 0
 
     def mint(self, label: str, bottle_id: str,
-             settings: Mapping[str, object], secrets: object) -> MintedCredential:
+             settings: Mapping[str, object], secrets: object,
+             *, minted_creds: Mapping[str, MintedCredential] | None = None,
+             ) -> MintedCredential:
         self.mint_calls += 1
         try:
             tok = next(self._tokens)
@@ -52,7 +54,9 @@ class _FakeProvider(CredentialProvider):
         return MintedCredential(KIND_TOKEN, {"token": tok}, expires_at, "fake")
 
     def renew(self, label: str, bottle_id: str, current: MintedCredential,
-              settings: Mapping[str, object], secrets: object) -> MintedCredential:
+              settings: Mapping[str, object], secrets: object,
+              *, minted_creds: Mapping[str, MintedCredential] | None = None,
+              ) -> MintedCredential:
         self.renew_calls += 1
         if self._fail_renew:
             raise RuntimeError("simulated renew failure")
