@@ -31,7 +31,7 @@ backend remains available with `BOT_BOTTLE_BACKEND=docker` or
 
 - `README.md` — short public-facing getting-started page.
 - `AGENTS.md` — this file, orientation for future agent sessions.
-- `CONTRIBUTING.md` — commit format and the PR tracker policy;
+- `CONTRIBUTING.md` — commit format and how issues are tracked;
   `AI_POLICY.md` and `SECURITY.md` sit beside it.
 - `.gitignore` — OS junk.
 - `.bot-bottle/` — per-repo agent and bottle manifests (YAML markdown format).
