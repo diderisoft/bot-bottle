@@ -794,6 +794,12 @@ The console is the first of:
 
 - The host dials the console it logged in to, over ALPN `bb-console/1`.
 - It refuses a console whose node id isn't the one pinned at login.
+- A host behind NAT reaches the console through an iroh relay. When the link
+  starts, the host asks the console which one (`GET <console>/api/v1/iroh/relay`,
+  `link_relay`): a console that runs its own names it, and the host makes it
+  its home relay, so traffic both ways goes through it. That relay lets in
+  only its console and the hosts paired with it. A console that names none,
+  or can't be asked, leaves iroh's public relays, which are rate-limited.
 - The link has its own protocol version (`contract/console_link.py`,
   [ADR 0024](../decisions/0024-console-link-is-versioned.md)). The host's
   first message is `hello` with its `protocol` and `version`. The console

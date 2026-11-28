@@ -1127,7 +1127,9 @@ class TestRemoteEnable(_CliCase):
         self.assertEqual(0, rc)
         self.assertEqual(("PUT", "https://console/api/v1/hosts/iroh",
                           {"node_id": "hostnode"}, "at"), calls[0])
-        self.assertEqual(pairing.RemoteConfig(True, "cid", "tk"), pairing.load_config())
+        # The console's URL too: the link asks it what relay to use (`link_relay`).
+        self.assertEqual(pairing.RemoteConfig(True, "cid", "tk", "https://console"),
+                         pairing.load_config())
 
     def test_refreshes_an_expired_token_once(self) -> None:
         self._login()

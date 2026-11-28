@@ -63,7 +63,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from ...contract.console_link import CONSOLE_MESSAGES
 from ...contract.hostctl import ORIGIN_CONSOLE, LaunchRequest
-from . import approval_answer, architect_setting, host_stats, link_protocol, remote_actions
+from . import (approval_answer, architect_setting, host_stats, link_protocol, link_relay,
+               remote_actions)
 from .children import child_agent_ids
 from .link_refusal import refused_delay
 from .live_metrics import MetricsWatch
@@ -757,8 +758,7 @@ async def run(config: RemoteConfig, bottles: Bottles, stop: threading.Event) -> 
     `stop` while connected ends the connection at once, so the host
     controller shuts down without waiting on the console."""
     iroh = import_iroh()
-    endpoint = await iroh.Endpoint.bind(iroh.EndpointOptions(
-        preset=iroh.preset_n0(), secret_key=secret_key(), alpns=[]))
+    endpoint = await link_relay.bind(iroh, config.url, secret_key())  # the console's relay
     attempt = 0
     state = LinkState()  # the link's agents, across reconnects
     # One waiter for the whole loop: a thread blocked on `stop` per attempt

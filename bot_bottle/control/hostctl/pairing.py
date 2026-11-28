@@ -46,6 +46,7 @@ class RemoteConfig:
     enabled: bool = False
     console_node_id: str = ""
     console_ticket: str = ""
+    url: str = ""  # the console's: what relay it asks hosts to use (`link_relay`)
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,7 @@ class Pairing:
     @property
     def config(self) -> RemoteConfig:
         return RemoteConfig(enabled=self.enabled, console_node_id=self.console_node_id,
-                            console_ticket=self.console_ticket)
+                            console_ticket=self.console_ticket, url=self.url)
 
     def require(self) -> "Pairing":
         """This pairing, if it's complete; else RemoteError saying so."""
