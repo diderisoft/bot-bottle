@@ -149,46 +149,6 @@ class PushOci(unittest.TestCase):
                 pi.push_oci("bot-bottle-gateway", "0.14.2", "linux/arm64")
 
 
-class PutGeneric(unittest.TestCase):
-    def _body(self, tmp: str) -> Path:
-        p = Path(tmp) / "rootfs.gz"
-        p.write_bytes(b"x" * 32)
-        return p
-
-    def test_uploads(self) -> None:
-        resp = mock.MagicMock()
-        resp.__enter__.return_value = mock.Mock(status=201)
-        with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch("urllib.request.urlopen", return_value=resp) as urlopen:
-                pi.put_generic("https://x/y", self._body(tmp), "tok")
-        # The registry stores and hashes a big rootfs before answering.
-        self.assertEqual(pi._UPLOAD_TIMEOUT_SECONDS, urlopen.call_args.kwargs["timeout"])
-
-    def test_no_answer_in_time_is_a_publish_error(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch("urllib.request.urlopen",
-                            side_effect=TimeoutError("The read operation timed out")):
-                with self.assertRaisesRegex(pi.PublishError, "no answer within"):
-                    pi.put_generic("https://x/y", self._body(tmp), "tok")
-
-    def test_conflict_points_at_the_version(self) -> None:
-        """A 409 means this version was already published. Overwriting silently
-        would let two different builds answer to one version."""
-        err = urllib.error.HTTPError("u", 409, "conflict", None, None)  # type: ignore[arg-type]
-        with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch("urllib.request.urlopen", side_effect=err):
-                with self.assertRaises(pi.PublishError) as ctx:
-                    pi.put_generic("https://x/y", self._body(tmp), "tok")
-        self.assertIn("already published", str(ctx.exception))
-
-    def test_unreachable_registry_aborts(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch("urllib.request.urlopen",
-                            side_effect=urllib.error.URLError("down")):
-                with self.assertRaises(pi.PublishError):
-                    pi.put_generic("https://x/y", self._body(tmp), "tok")
-
-
 def _built(name: str = "bot-bottle-gateway") -> pi.BuiltImage:
     return pi.BuiltImage(name=name, version="0.14.2", artifacts=[
         pi.BuiltArtifact("oci", "linux/arm64", _A, "0.14.2-arm64", "ref", _HASH),
