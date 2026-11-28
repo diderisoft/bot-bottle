@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import sys
 import unittest
 from pathlib import Path
 from typing import Any
@@ -586,6 +587,8 @@ class TestSmokeTest(unittest.TestCase):
 
 
 class TestMakeBottleRootfs(unittest.TestCase):
+    @unittest.skipUnless(sys.platform.startswith("linux"),
+                         "GNU cp --sparse, as on the Linux hosts firecracker runs on")
     def test_image_base_is_copied(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp) / "base.ext4"
@@ -605,6 +608,8 @@ class TestMakeBottleRootfs(unittest.TestCase):
             build.assert_called_once_with(base, out)
 
 
+@unittest.skipUnless(sys.platform.startswith("linux"),
+                     "GNU tar, as on the Linux hosts firecracker runs on")
 class TestStreamRootfs(unittest.TestCase):
     def test_read_only_mount_root_leaves_base_writable(self) -> None:
         # buildah's overlay mount root is 0555 and `tar -C $mnt -cf - .`

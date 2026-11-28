@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -253,6 +254,8 @@ class TestBuildPaths(unittest.TestCase):
              self.assertRaises(SystemExit):
             util.export_image_rootfs("docker", "img", self.tree)
 
+    @unittest.skipUnless(sys.platform.startswith("linux"),
+                         "GNU tar, as on the Linux hosts firecracker runs on")
     def test_a_builder_vm_stream_records_owners(self) -> None:
         argv = ["sh", "-c", f"cat {self.tar}", "ssh"]
         with patch.object(image_builder.util, "ssh_base_argv", return_value=argv):

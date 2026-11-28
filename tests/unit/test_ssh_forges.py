@@ -552,7 +552,8 @@ class TestServerPaths(unittest.TestCase):
 
 class _Cli(unittest.TestCase):
     def setUp(self) -> None:
-        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))  # pylint: disable=consider-using-with
+        # Resolved: on macOS the temp dir is under /var, a link to /private/var.
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()  # pylint: disable=consider-using-with
         self.addCleanup(use_bottle_root(self.root))
         serve_host_controller(self)
         as_cli(self)

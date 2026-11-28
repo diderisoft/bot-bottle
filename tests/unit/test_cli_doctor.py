@@ -173,6 +173,8 @@ class TestDoctorSelectedBackend(unittest.TestCase):
     get one line and are never offered for install (2026-11-05, on delos)."""
 
     def setUp(self) -> None:
+        # Not a Mac: there the Apple Container nudge takes `next:` (tested apart).
+        self.enterContext(patch.object(doctor.sys, "platform", "linux"))
         self.enterContext(patch.object(doctor, "backend_os_requirement", return_value=""))
         self.enterContext(patch.object(doctor, "known_backend_names",
                                        return_value=("docker", "macos-container")))

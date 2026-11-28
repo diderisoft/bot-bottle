@@ -282,9 +282,9 @@ class TestFirecrackerHelpers(_Root):
 
         with mock.patch.object(fc_cleanup, "_firecracker_pids", return_value=[11, 12]), \
              mock.patch.object(fc_cleanup, "_process_args", side_effect=args.get), \
-             mock.patch.object(fc_cleanup.os, "pidfd_open", side_effect=pidfd_open), \
+             mock.patch.object(fc_cleanup.os, "pidfd_open", side_effect=pidfd_open, create=True), \
              mock.patch.object(fc_cleanup.os, "close"), \
-             mock.patch.object(fc_cleanup.signal, "pidfd_send_signal") as send, \
+             mock.patch.object(fc_cleanup.signal, "pidfd_send_signal", create=True) as send, \
              mock.patch.object(fc_cleanup.select, "select", side_effect=exited):
             fc_cleanup.stop_vmms(run_dir)
         self.assertEqual([mock.call(111, fc_cleanup.signal.SIGTERM)], send.call_args_list)
