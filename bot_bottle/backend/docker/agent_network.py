@@ -37,21 +37,31 @@ def is_agent_network(name: str) -> bool:
     return name.startswith(AGENT_NETWORK_PREFIX)
 
 
+# A network another launch or job removes between the list and the inspect
+# fails the whole inspect ("network … not found"): list again, a few times.
+_SUBNET_PROBE_TRIES = 3
+
+
 def _docker_subnets() -> list[str]:
     """Every subnet of every docker network, so allocation skips them."""
-    ids = run_docker(["docker", "network", "ls", "--quiet"])
-    if ids.returncode != 0:
-        raise AgentNetworkError(f"could not list docker networks: {ids.stderr.strip()}")
-    if not ids.stdout.split():
-        return []
-    proc = run_docker([
-        "docker", "network", "inspect",
-        "--format", "{{range .IPAM.Config}}{{.Subnet}} {{end}}",
-        *ids.stdout.split(),
-    ])
-    if proc.returncode != 0:
-        raise AgentNetworkError(f"could not inspect docker networks: {proc.stderr.strip()}")
-    return proc.stdout.split()
+    err = ""
+    for _ in range(_SUBNET_PROBE_TRIES):
+        ids = run_docker(["docker", "network", "ls", "--quiet"])
+        if ids.returncode != 0:
+            raise AgentNetworkError(f"could not list docker networks: {ids.stderr.strip()}")
+        if not ids.stdout.split():
+            return []
+        proc = run_docker([
+            "docker", "network", "inspect",
+            "--format", "{{range .IPAM.Config}}{{.Subnet}} {{end}}",
+            *ids.stdout.split(),
+        ])
+        if proc.returncode == 0:
+            return proc.stdout.split()
+        err = proc.stderr.strip()
+        if "not found" not in err:
+            break
+    raise AgentNetworkError(f"could not inspect docker networks: {err}")
 
 
 # Every docker network's subnets, for other allocators (the gateway network's).
