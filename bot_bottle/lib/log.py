@@ -67,15 +67,15 @@ def current_sink() -> Callable[[str], None]:
     return sink if sink is not None else _stderr_line
 
 
-# Whether lines written to stderr start with a timestamp (`stamp_stderr`).
-_STAMPED = False
+# How lines written to stderr look: whether they start with a timestamp
+# (`stamp_stderr`).
+_STDERR = {"stamped": False}
 
 
 def stamp_stderr(on: bool = True) -> None:
     """Start each line written to stderr with a UTC timestamp: for a process
     whose stderr is a log file. A job's sink gets its lines as they are."""
-    global _STAMPED  # pylint: disable=global-statement
-    _STAMPED = on
+    _STDERR["stamped"] = on
 
 
 def _stamp(now: float | None = None) -> str:
@@ -84,7 +84,7 @@ def _stamp(now: float | None = None) -> str:
 
 
 def _stderr_line(line: str) -> None:
-    sys.stderr.write(f"{_stamp()} {line}\n" if _STAMPED else line + "\n")
+    sys.stderr.write(f"{_stamp()} {line}\n" if _STDERR["stamped"] else line + "\n")
 
 
 def write_line(line: str) -> None:
