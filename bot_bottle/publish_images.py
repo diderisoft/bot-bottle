@@ -25,6 +25,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -46,6 +47,11 @@ _CHUNK = 1 << 20
 _HTTP_TIMEOUT_SECONDS = 60.0
 # The registry hashes a large rootfs before answering.
 _UPLOAD_TIMEOUT_SECONDS = 900.0
+# Gitea sometimes restarts during a large upload (the proxy answers 5xx);
+# it is back within a minute, so wait and try again.
+_UPLOAD_TRIES = 3
+_UPLOAD_RETRY_STATUSES = frozenset({502, 503, 504})
+_UPLOAD_RETRY_DELAY_SECONDS = 30.0
 
 _DEFAULT_BASE = "https://ghcr.io"
 _DEFAULT_OWNER = "diderisoft"
@@ -208,7 +214,36 @@ def push_oci(image: str, version: str, plat: str, *, runtime: str = "docker") ->
 
 
 def put_generic(url: str, body: Path, token: str) -> None:
-    """PUT a large file, streamed."""
+    """PUT a large file, streamed, trying again when the proxy answers 5xx."""
+    for attempt in range(1, _UPLOAD_TRIES + 1):
+        try:
+            _put_once(url, body, token)
+            return
+        except urllib.error.HTTPError as e:
+            if e.code == 409 and attempt > 1:
+                # The 5xx came after the registry had stored the file. The
+                # version is this run's own, so the stored file is this one.
+                print(f"  uploaded {url} (stored before the proxy error)")
+                return
+            if e.code == 409:
+                raise PublishError(
+                    f"already published at {url} (HTTP 409); "
+                    f"bump the version to republish"
+                ) from e
+            if e.code in _UPLOAD_RETRY_STATUSES and attempt < _UPLOAD_TRIES:
+                print(f"  upload of {url} got HTTP {e.code}; trying again "
+                      f"({attempt}/{_UPLOAD_TRIES})")
+                time.sleep(_UPLOAD_RETRY_DELAY_SECONDS * attempt)
+                continue
+            raise PublishError(f"upload failed (HTTP {e.code}): {url}") from e
+        except urllib.error.URLError as e:
+            raise PublishError(f"registry unreachable: {url} ({e.reason})") from e
+        except TimeoutError as e:
+            raise PublishError(
+                f"upload of {url} got no answer within {_UPLOAD_TIMEOUT_SECONDS:.0f}s") from e
+
+
+def _put_once(url: str, body: Path, token: str) -> None:
     length = body.stat().st_size
     with open(body, "rb") as handle:
         req = urllib.request.Request(url, data=handle, method="PUT")  # type: ignore[arg-type]
@@ -216,21 +251,8 @@ def put_generic(url: str, body: Path, token: str) -> None:
         req.add_header("Content-Type", "application/octet-stream")
         if token:
             req.add_header("Authorization", f"token {token}")
-        try:
-            with urllib.request.urlopen(req, timeout=_UPLOAD_TIMEOUT_SECONDS) as resp:
-                print(f"  uploaded {url} (HTTP {resp.status})")
-        except urllib.error.HTTPError as e:
-            if e.code == 409:
-                raise PublishError(
-                    f"already published at {url} (HTTP 409); "
-                    f"bump the version to republish"
-                ) from e
-            raise PublishError(f"upload failed (HTTP {e.code}): {url}") from e
-        except urllib.error.URLError as e:
-            raise PublishError(f"registry unreachable: {url} ({e.reason})") from e
-        except TimeoutError as e:
-            raise PublishError(
-                f"upload of {url} got no answer within {_UPLOAD_TIMEOUT_SECONDS:.0f}s") from e
+        with urllib.request.urlopen(req, timeout=_UPLOAD_TIMEOUT_SECONDS) as resp:
+            print(f"  uploaded {url} (HTTP {resp.status})")
 
 
 def ext4_url(image: str, version: str, plat: str) -> str:

@@ -181,6 +181,47 @@ class PutGeneric(unittest.TestCase):
                     pi.put_generic("https://x/y", self._body(tmp), "tok")
         self.assertIn("already published", str(ctx.exception))
 
+    def _ok(self) -> mock.MagicMock:
+        resp = mock.MagicMock()
+        resp.__enter__.return_value = mock.Mock(status=201)
+        return resp
+
+    @staticmethod
+    def _err(code: int) -> urllib.error.HTTPError:
+        return urllib.error.HTTPError("u", code, "x", None, None)  # type: ignore[arg-type]
+
+    def test_a_bad_gateway_is_tried_again(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(pi.time, "sleep"), \
+                mock.patch("urllib.request.urlopen",
+                           side_effect=[self._err(502), self._ok()]) as urlopen:
+            pi.put_generic("https://x/y", self._body(tmp), "tok")
+        self.assertEqual(2, urlopen.call_count)
+
+    def test_it_gives_up_after_three_tries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(pi.time, "sleep"), \
+                mock.patch("urllib.request.urlopen",
+                           side_effect=[self._err(502)] * 3) as urlopen:
+            with self.assertRaisesRegex(pi.PublishError, "HTTP 502"):
+                pi.put_generic("https://x/y", self._body(tmp), "tok")
+        self.assertEqual(3, urlopen.call_count)
+
+    def test_a_conflict_after_a_bad_gateway_means_it_was_stored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(pi.time, "sleep"), \
+                mock.patch("urllib.request.urlopen",
+                           side_effect=[self._err(502), self._err(409)]):
+            pi.put_generic("https://x/y", self._body(tmp), "tok")
+
+    def test_another_error_is_not_tried_again(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch("urllib.request.urlopen",
+                           side_effect=self._err(401)) as urlopen:
+            with self.assertRaisesRegex(pi.PublishError, "HTTP 401"):
+                pi.put_generic("https://x/y", self._body(tmp), "tok")
+        self.assertEqual(1, urlopen.call_count)
+
     def test_unreachable_registry_aborts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch("urllib.request.urlopen",
