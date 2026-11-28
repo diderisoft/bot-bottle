@@ -18,7 +18,7 @@ from ...contract.auth import ROLE_GATEWAY
 from ...contract.hostctl import GUEST_PORT, HOST_CONTROL, PORT_ENV, ROLE_ORCHESTRATOR
 from ... import host_access
 from ...control.lifecycle import Orchestrator
-from ...lib.log import debug, error, info, warn
+from ...lib.log import debug, error, info, stamp_stderr, warn
 from ...paths import bot_bottle_root
 from ...trust_domain import HostControlProvisioning, HostLink, signing_key
 from .build import current_build_id
@@ -135,6 +135,8 @@ def main() -> int:
     # Keeps hostctl.log, which its launcher opened as stdout and stderr, from
     # growing without bound.
     log_rotator = LogRotator(state_dir() / "hostctl.log").start()
+    if log_rotator.writes_log():  # each line says when, as the audit journal does
+        stamp_stderr()
     # The host DB's only writer checks, backs up and migrates it before
     # anything here reads it, and won't start on a corrupt one.
     if not host_db.open_for_start():

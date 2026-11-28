@@ -31,6 +31,10 @@ python -m bot_bottle.control.hostctl
 - It logs to `~/.bot-bottle/hostctl/hostctl.log`, whichever of the CLI,
   systemd or launchd started it. At 16 MiB the daemon moves it to
   `hostctl.log.1` and opens a fresh one, keeping 3 older files.
+- Each line it logs there starts with a UTC timestamp
+  (`2026-11-28T14:55:03.775Z bot-bottle: …`). Run by hand on a terminal, it
+  logs without them. Output from the programs it starts (an image build, say)
+  goes to the file as those programs write it.
 
 ### Restarts after an upgrade
 
