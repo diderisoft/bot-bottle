@@ -47,6 +47,41 @@ class TestSubnetAllocation(unittest.TestCase):
         self.assertEqual(("10.242.0.10", "10.242.0.11"), agent_subnet_addresses("10.242.0.8/29"))
 
 
+class TestDockerSubnets(unittest.TestCase):
+    """The list of subnets taken, when networks come and go meanwhile."""
+
+    def _subnets(self, inspects: list["subprocess.CompletedProcess[str]"]):
+        answers = iter(inspects)
+        calls: list[list[str]] = []
+
+        def run(argv: list[str], **_: object) -> "subprocess.CompletedProcess[str]":
+            calls.append(argv)
+            if argv[:3] == ["docker", "network", "ls"]:
+                return _done(out="id1\nid2\n")
+            return next(answers)
+
+        with patch.object(an, "run_docker", side_effect=run):
+            return an._docker_subnets(), calls
+
+    def test_a_network_removed_meanwhile_lists_again(self) -> None:
+        subnets, calls = self._subnets([
+            _done(1, err="Error response from daemon: network id2 not found"),
+            _done(out="172.17.0.0/16 10.242.0.0/29 "),
+        ])
+        self.assertEqual(["172.17.0.0/16", "10.242.0.0/29"], subnets)
+        self.assertEqual(2, sum(c[:3] == ["docker", "network", "ls"] for c in calls))
+
+    def test_it_gives_up_after_three_tries(self) -> None:
+        gone = _done(1, err="Error response from daemon: network id2 not found")
+        with self.assertRaisesRegex(an.AgentNetworkError, "could not inspect docker networks"):
+            self._subnets([gone, gone, gone])
+
+    def test_another_inspect_error_fails_at_once(self) -> None:
+        # Only one inspect answer: a second try would exhaust it.
+        with self.assertRaisesRegex(an.AgentNetworkError, "permission denied"):
+            self._subnets([_done(1, err="permission denied")])
+
+
 class TestCreate(unittest.TestCase):
     def _run(self, creates: list["subprocess.CompletedProcess[str]"], *,
              existing: str = "10.242.0.0/29", inspect: str = "1|true|10.242.0.0/29",
