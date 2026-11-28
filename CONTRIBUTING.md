@@ -57,19 +57,11 @@ a link to the commit. Issues are triaged into the Gitea tracker the same way.
 
 ## The tracker
 
-Issues are the canonical work items and own their labels; every issue has at
-least one. Each pull request is tracked in exactly one of two ways
-([ADR 0005](docs/decisions/0005-issues-own-tracker-metadata.md)):
-
-- it references an issue in its title or description, with `Closes #…`,
-  `Fixes #…`, `Part of #…`, `Refs #…` or another form the ADR lists, and
-  stays unlabelled; or
-- it carries at least one label itself, when a separate issue would add
-  nothing.
-
-Gitea Actions enforces this for new work from 2026-07-18 onward. Earlier
-closed PRs are grandfathered rather than given artificial retrospective
-issues.
+Issues are the canonical work items and own their labels; an issue left
+without one gets `Status/Needs Triage` automatically
+([ADR 0005](docs/decisions/0005-issues-own-tracker-metadata.md)). A pull
+request needs neither an issue nor a label: reference an issue (`Fixes #…`,
+`Refs #…`) when there is one.
 
 `#NNN` references in commit messages and PR descriptions point to the Gitea
 issue tracker at <https://gitea.dideric.is/didericis/bot-bottle/issues>, not to
