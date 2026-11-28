@@ -59,6 +59,11 @@ class Rotation(unittest.TestCase):
         self.assertFalse(self.rotator.check())
         self.assertEqual(["elsewhere.log"], self.names())
 
+    def test_it_knows_whether_it_writes_the_log(self) -> None:
+        self.assertTrue(self.rotator.writes_log())
+        os.replace(self.log, self.log.parent / "elsewhere.log")
+        self.assertFalse(self.rotator.writes_log())
+
     def test_the_thread_stops(self) -> None:
         rotator = LogRotator(self.log, max_bytes=100, interval=0.01, fds=self.fds).start()
         rotator.stop()

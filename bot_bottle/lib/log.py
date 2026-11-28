@@ -5,7 +5,9 @@
 - Context: an optional mapping rendered as a parseable ` [k=v ...]` suffix.
 
 Lines look like `bot-bottle: <msg>`, `bot-bottle: warning: <msg>`, `bot-bottle:
-error: <msg>`.
+error: <msg>`. A process whose stderr is a log file (the host controller's
+`hostctl.log`) turns on `stamp_stderr`: each line it writes there then starts
+with a UTC timestamp, `2026-11-28T14:55:03.775Z bot-bottle: …`.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from __future__ import annotations
 import contextvars
 import os
 import sys
+import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from typing import Mapping, NoReturn
@@ -64,15 +67,31 @@ def current_sink() -> Callable[[str], None]:
     return sink if sink is not None else _stderr_line
 
 
+# Whether lines written to stderr start with a timestamp (`stamp_stderr`).
+_STAMPED = False
+
+
+def stamp_stderr(on: bool = True) -> None:
+    """Start each line written to stderr with a UTC timestamp: for a process
+    whose stderr is a log file. A job's sink gets its lines as they are."""
+    global _STAMPED  # pylint: disable=global-statement
+    _STAMPED = on
+
+
+def _stamp(now: float | None = None) -> str:
+    now = time.time() if now is None else now
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now)) + f".{int(now * 1000) % 1000:03d}Z"
+
+
 def _stderr_line(line: str) -> None:
-    sys.stderr.write(line + "\n")
+    sys.stderr.write(f"{_stamp()} {line}\n" if _STAMPED else line + "\n")
 
 
 def write_line(line: str) -> None:
     """Write one line (no newline) to this context's sink."""
     sink = _SINK.get()
     if sink is None:
-        sys.stderr.write(line + "\n")
+        _stderr_line(line)
     else:
         sink(line)
 

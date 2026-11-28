@@ -61,6 +61,10 @@ class LogRotator:
         self._thread.start()
         return self
 
+    def writes_log(self) -> bool:
+        """Whether stdout is the log file (not a terminal, as when run by hand)."""
+        return _same_file(self._fds[0], self._path)
+
     def stop(self) -> None:
         self._stop.set()
 

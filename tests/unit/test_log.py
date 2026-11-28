@@ -123,5 +123,28 @@ class TestDie(unittest.TestCase):
         self.assertIn("bot-bottle: error: still fatal", buf.getvalue())
 
 
+class TestStampedStderr(unittest.TestCase):
+    """`stamp_stderr`: the host controller's hostctl.log says when each line was."""
+
+    def tearDown(self) -> None:
+        log.stamp_stderr(False)
+
+    def test_off_by_default(self) -> None:
+        self.assertEqual("bot-bottle: hello\n", _capture(log.info, "hello"))
+
+    def test_on_each_line_starts_with_utc_time(self) -> None:
+        log.stamp_stderr()
+        with mock.patch("time.time", return_value=1795875000.25):
+            out = _capture(log.warn, "slow")
+        self.assertEqual("2026-11-28T14:10:00.250Z bot-bottle: warning: slow\n", out)
+
+    def test_a_jobs_sink_gets_its_lines_as_they_are(self) -> None:
+        log.stamp_stderr()
+        lines: list[str] = []
+        with log.redirect(lines.append):
+            log.info("hello")
+        self.assertEqual(["bot-bottle: hello"], lines)
+
+
 if __name__ == "__main__":
     unittest.main()
